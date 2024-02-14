@@ -3,12 +3,7 @@ use tonic::{transport::Server, Request, Response, Status, Code};
 use scheduler_interface::scheduler_service_server::SchedulerService;
 use scheduler_interface::scheduler_service_server::SchedulerServiceServer;
 
-mod substrait {
-    include!(concat!(env!("OUT_DIR"), "/substrait.rs"));
-    pub mod extensions {
-        include!(concat!(env!("OUT_DIR"), "/substrait.extensions.rs"));
-    }
-}
+use substrait::proto as substrait;
 
 pub mod scheduler_interface {
     tonic::include_proto!("scheduler_interface");
