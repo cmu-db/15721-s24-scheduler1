@@ -5,4 +5,16 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bin]]
+name = "scheduler-api-server"
+path = "src/proto_server.rs"
+
 [dependencies]
+substrait = "0.24.2"
+tonic = "0.11"
+prost = "0.12.3"
+prost-types = "0.12.3"
+tokio = { version = "1.36", features = ["macros", "rt-multi-thread"] }
+
+[build-dependencies]
+tonic-build = "0.11"

@@ -1,0 +1,3 @@
+[submodule "third-party/substrait"]
+	path = proto/substrait
+	url = https://github.com/substrait-io/substrait
