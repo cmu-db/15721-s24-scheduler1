@@ -1,33 +1,90 @@
-use tonic::{transport::Server, Request, Response, Status};
+use tonic::{transport::Server, Request, Response, Status, Code};
 
-use scheduler::scheduler_server::{Scheduler, SchedulerServer};
+use scheduler_interface::scheduler_service_server::SchedulerService;
+use scheduler_interface::scheduler_service_server::SchedulerServiceServer;
 
-pub mod scheduler {
-    tonic::include_proto!("scheduler");
+mod substrait {
+    include!(concat!(env!("OUT_DIR"), "/substrait.rs"));
+    pub mod extensions {
+        include!(concat!(env!("OUT_DIR"), "/substrait.extensions.rs"));
+    }
 }
+
+pub mod scheduler_interface {
+    tonic::include_proto!("scheduler_interface");
+}
+
+use scheduler_interface::*;
 
 #[derive(Debug,Default)]
 pub struct MyScheduler {}
 
+mod scheduler;
+
 #[tonic::async_trait]
-impl Scheduler for MyScheduler {
+impl SchedulerService for MyScheduler {
     async fn schedule_query(
         &self,
-        request: Request<scheduler::ScheduleQueryArgs>
-    ) -> Result<Response<scheduler::ScheduleQueryRet>, Status> {
-        unimplemented!()
+        request: Request<ScheduleQueryArgs>
+    ) -> Result<Response<ScheduleQueryRet>, Status> {
+        let request_content = request.into_inner();
+        let physical_plan = request_content.physical_plan;
+        let metadata = request_content.metadata;
+
+        if metadata.is_none() {
+            let status =
+                Status::new(Code::InvalidArgument, "Metadata not specified");
+            return Err(status);
+        }
+
+        if physical_plan.is_none() {
+            let status =
+                Status::new(Code::InvalidArgument, "Physical plan not specified");
+            return Err(status);
+        }
+
+        let query_id = scheduler::SCHEDULER_INSTANCE.schedule_query(physical_plan.unwrap(), metadata.unwrap());
+
+        let reply = ScheduleQueryRet {
+            query_id
+        };
+        Ok(Response::new(reply))
     }
+
     async fn query_job_status(
         &self,
-        request: Request<scheduler::QueryJobStatusArgs>
-    ) -> Result<Response<scheduler::QueryJobStatusRet>, Status> {
-        unimplemented!()
+        request: Request<QueryJobStatusArgs>
+    ) -> Result<Response<QueryJobStatusRet>, Status> {
+        let request_content = request.into_inner();
+        let query_id = request_content.query_id;
+
+        let query_status =
+            scheduler::SCHEDULER_INSTANCE.query_job_status(query_id);
+
+        let reply = QueryJobStatusRet {
+            query_status: query_status.into()
+        };
+        Ok(Response::new(reply))
     }
+
     async fn query_execution_done(
         &self,
-        request: Request<scheduler::QueryExecutionDoneArgs>
-    ) -> Result<Response<scheduler::QueryExecutionDoneRet>, Status> {
-        unimplemented!()
+        request: Request<QueryExecutionDoneArgs>
+    ) -> Result<Response<QueryExecutionDoneRet>, Status> {
+        let request_content = request.into_inner();
+        let fragment_id = request_content.fragment_id;
+        let query_status = QueryStatus::try_from(request_content.status);
+
+        if query_status.is_err() {
+            let status =
+                Status::new(Code::InvalidArgument, "Query status not specified");
+            return Err(status);
+        }
+        scheduler::SCHEDULER_INSTANCE.query_execution_done(
+            fragment_id, query_status.unwrap());
+
+        let reply = QueryExecutionDoneRet { };
+        Ok(Response::new(reply))
     }
 }
 
@@ -37,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scheduler = MyScheduler::default();
 
     Server::builder()
-        .add_service(SchedulerServer::new(scheduler))
+        .add_service(SchedulerServiceServer::new(scheduler))
         .serve(addr)
         .await?;
 
