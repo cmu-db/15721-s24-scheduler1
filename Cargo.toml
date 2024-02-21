@@ -10,7 +10,7 @@ name = "scheduler-api-server"
 path = "src/proto_server.rs"
 
 [dependencies]
-substrait = "0.24.2"
+datafusion = "36.0.0"
 tonic = "0.11"
 prost = "0.12.3"
 prost-types = "0.12.3"

@@ -3,8 +3,6 @@ use tonic::{transport::Server, Request, Response, Status, Code};
 use scheduler_interface::scheduler_service_server::SchedulerService;
 use scheduler_interface::scheduler_service_server::SchedulerServiceServer;
 
-use substrait::proto as substrait;
-
 pub mod scheduler_interface {
     tonic::include_proto!("scheduler_interface");
 }
