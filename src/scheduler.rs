@@ -25,7 +25,11 @@ pub enum PipelineBreakers {
 pub struct IntermediateNode {}
 
 impl Scheduler {
-    pub fn schedule_query(&self, physical_plan: Arc<dyn ExecutionPlan>, query_info: QueryInfo) -> i32 {
+    pub fn schedule_query(
+        &self,
+        physical_plan: Arc<dyn ExecutionPlan>,
+        query_info: QueryInfo,
+    ) -> i32 {
         unimplemented!()
     }
 
@@ -37,8 +41,7 @@ impl Scheduler {
         unimplemented!()
     }
 
-    pub fn parse_physical_plan(&self, physical_plan: &dyn ExecutionPlan) {
-    }
+    pub fn parse_physical_plan(&self, physical_plan: &dyn ExecutionPlan) {}
 }
 
 pub static SCHEDULER_INSTANCE: Scheduler = Scheduler {};
