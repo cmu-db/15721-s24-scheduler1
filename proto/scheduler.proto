@@ -1,7 +1,5 @@
 syntax = "proto3";
 
-import "substrait/plan.proto";
-
 package scheduler_interface;
 
 // Metadata related to a query that the optimizer sends when submitting a query
@@ -38,7 +36,7 @@ enum QueryStatus {
 // Information required to schedule a query.
 message ScheduleQueryArgs {
     // A Substrait physical plan.
-    substrait.Plan physical_plan = 1;
+    bytes physical_plan = 1;
 
     // Metadata related to the query.
     QueryInfo metadata = 2;

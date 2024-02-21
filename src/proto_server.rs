@@ -2,6 +2,9 @@ use tonic::{transport::Server, Request, Response, Status, Code};
 
 use scheduler_interface::scheduler_service_server::SchedulerService;
 use scheduler_interface::scheduler_service_server::SchedulerServiceServer;
+use datafusion_proto::bytes::physical_plan_from_bytes;
+
+use datafusion::execution::context::SessionContext;
 
 pub mod scheduler_interface {
     tonic::include_proto!("scheduler_interface");
@@ -21,7 +24,13 @@ impl SchedulerService for MyScheduler {
         request: Request<ScheduleQueryArgs>
     ) -> Result<Response<ScheduleQueryRet>, Status> {
         let request_content = request.into_inner();
-        let physical_plan = request_content.physical_plan;
+        let physical_plan_bytes = request_content.physical_plan;
+
+        // Deserialize physical plan
+        let ctx = SessionContext::new();
+        let physical_plan =
+            physical_plan_from_bytes(&physical_plan_bytes, &ctx).unwrap();
+
         let metadata = request_content.metadata;
 
         if metadata.is_none() {
@@ -30,13 +39,7 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
 
-        if physical_plan.is_none() {
-            let status =
-                Status::new(Code::InvalidArgument, "Physical plan not specified");
-            return Err(status);
-        }
-
-        let query_id = scheduler::SCHEDULER_INSTANCE.schedule_query(physical_plan.unwrap(), metadata.unwrap());
+        let query_id = scheduler::SCHEDULER_INSTANCE.schedule_query(physical_plan, metadata.unwrap());
 
         let reply = ScheduleQueryRet {
             query_id

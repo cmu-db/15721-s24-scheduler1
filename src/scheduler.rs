@@ -1,6 +1,8 @@
 use crate::scheduler_interface::*;
 use datafusion::physical_plan::ExecutionPlan;
 
+use std::sync::Arc;
+
 pub struct Scheduler {}
 
 pub enum PipelineBreakers {
@@ -23,7 +25,7 @@ pub enum PipelineBreakers {
 pub struct IntermediateNode {}
 
 impl Scheduler {
-    pub fn schedule_query(&self, physical_plan: dyn ExecutionPlan, query_info: QueryInfo) -> i32 {
+    pub fn schedule_query(&self, physical_plan: Arc<dyn ExecutionPlan>, query_info: QueryInfo) -> i32 {
         unimplemented!()
     }
 
@@ -35,11 +37,7 @@ impl Scheduler {
         unimplemented!()
     }
 
-    pub fn parse_physical_plan(&self, physical_plan:  dyn ExecutionPlan) {
-        for plan_rel in physical_plan.relations {
-            if let Some(rel_type) = plan_rel.rel_type {
-            }
-        }
+    pub fn parse_physical_plan(&self, physical_plan: &dyn ExecutionPlan) {
     }
 }
 
