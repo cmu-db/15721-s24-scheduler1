@@ -27,21 +27,21 @@ pub struct IntermediateNode {}
 impl Scheduler {
     pub fn schedule_query(
         &self,
-        physical_plan: Arc<dyn ExecutionPlan>,
-        query_info: QueryInfo,
+        _physical_plan: Arc<dyn ExecutionPlan>,
+        _query_info: QueryInfo,
     ) -> i32 {
         unimplemented!()
     }
 
-    pub fn query_job_status(&self, query_id: i32) -> QueryStatus {
+    pub fn query_job_status(&self, _query_id: i32) -> QueryStatus {
         unimplemented!()
     }
 
-    pub fn query_execution_done(&self, fragment_id: i32, query_status: QueryStatus) {
+    pub fn query_execution_done(&self, _fragment_id: i32, _query_status: QueryStatus) {
         unimplemented!()
     }
 
-    pub fn parse_physical_plan(&self, physical_plan: &dyn ExecutionPlan) {}
+    pub fn parse_physical_plan(&self, _physical_plan: &dyn ExecutionPlan) {}
 }
 
 pub static SCHEDULER_INSTANCE: Scheduler = Scheduler {};
