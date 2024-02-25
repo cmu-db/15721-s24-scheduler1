@@ -84,7 +84,8 @@ fn parse_into_fragments(
     // Single child just go down
     if children.len() == 1 {
         path.push(0);
-        let new_child = parse_into_fragments(children[0].clone(), fragment_id, output, query_id, path);
+        let new_child =
+            parse_into_fragments(children[0].clone(), fragment_id, output, query_id, path);
         return root.with_new_children(vec![new_child]).unwrap();
     }
 
@@ -155,11 +156,10 @@ async fn create_dummy_scans(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn Exe
 mod tests {
     use crate::parser::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-    use datafusion_expr::{col, lit, LogicalPlan};
     use datafusion::physical_plan::{
-        coalesce_batches::CoalesceBatchesExec,
-        filter::FilterExec,
-        empty::EmptyExec,};
+        coalesce_batches::CoalesceBatchesExec, empty::EmptyExec, filter::FilterExec,
+    };
+    use datafusion_expr::{col, lit, LogicalPlan};
 
     async fn build_toy_physical_plan() -> Result<Arc<dyn ExecutionPlan>> {
         // create a logical table source
@@ -194,7 +194,10 @@ mod tests {
     }
 
     fn validate_physical_plan_structure(root_node: &Arc<dyn ExecutionPlan>) {
-        root_node.as_any().downcast_ref::<CoalesceBatchesExec>().unwrap();
+        root_node
+            .as_any()
+            .downcast_ref::<CoalesceBatchesExec>()
+            .unwrap();
 
         let node0_children = root_node.children();
         assert_eq!(node0_children.len(), 1);
