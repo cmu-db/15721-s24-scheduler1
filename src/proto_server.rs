@@ -44,7 +44,10 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
 
-        let query_id = SCHEDULER_INSTANCE.schedule_query(physical_plan, metadata.unwrap());
+        let query_id = SCHEDULER_INSTANCE
+            .lock()
+            .unwrap()
+            .schedule_query(physical_plan, metadata.unwrap());
 
         let reply = ScheduleQueryRet { query_id };
         Ok(Response::new(reply))
@@ -57,7 +60,10 @@ impl SchedulerService for MyScheduler {
         let request_content = request.into_inner();
         let query_id = request_content.query_id;
 
-        let query_status = SCHEDULER_INSTANCE.query_job_status(query_id);
+        let query_status = SCHEDULER_INSTANCE
+            .lock()
+            .unwrap()
+            .query_job_status(query_id);
 
         let reply = QueryJobStatusRet {
             query_status: query_status.into(),
@@ -77,7 +83,10 @@ impl SchedulerService for MyScheduler {
             let status = Status::new(Code::InvalidArgument, "Query status not specified");
             return Err(status);
         }
-        SCHEDULER_INSTANCE.query_execution_done(fragment_id, query_status.unwrap());
+        SCHEDULER_INSTANCE
+            .lock()
+            .unwrap()
+            .query_execution_done(fragment_id, query_status.unwrap());
 
         let reply = QueryExecutionDoneRet {};
         Ok(Response::new(reply))
