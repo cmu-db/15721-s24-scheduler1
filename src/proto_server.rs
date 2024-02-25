@@ -6,6 +6,9 @@ use scheduler_interface::scheduler_service_server::SchedulerServiceServer;
 
 use datafusion::execution::context::SessionContext;
 
+use datafusion_proto::physical_plan::{AsExecutionPlan, DefaultPhysicalExtensionCodec};
+use datafusion_proto::protobuf;
+
 pub mod scheduler_interface {
     tonic::include_proto!("scheduler_interface");
 }
@@ -34,6 +37,15 @@ impl SchedulerService for MyScheduler {
 
         if metadata.is_none() {
             let status = Status::new(Code::InvalidArgument, "Metadata not specified");
+            return Err(status);
+        }
+
+        let codec = DefaultPhysicalExtensionCodec {};
+        let physical_plan_proto =
+            protobuf::PhysicalPlanNode::try_from_physical_plan(physical_plan.clone(), &codec);
+
+        if physical_plan_proto.is_err() {
+            let status = Status::new(Code::InvalidArgument, "Error converting to proto");
             return Err(status);
         }
 
