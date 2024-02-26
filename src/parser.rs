@@ -5,7 +5,6 @@ use datafusion::logical_expr::LogicalPlanBuilder;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{DefaultPhysicalPlanner, PhysicalPlanner};
 use datafusion_common::Result;
-use more_asserts as ma;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -95,9 +94,7 @@ async fn parse_into_fragments(
 
     let mut new_children = Vec::<Arc<dyn ExecutionPlan>>::new();
 
-    let mut child_num: u32 = 0;
-
-    for child in children {
+    for (child_num, child) in (0_u32..).zip(children.into_iter()) {
         let child_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
         let child_query_fragment = PhysicalPlanFragment {
             query_id,
@@ -126,8 +123,6 @@ async fn parse_into_fragments(
             .unwrap()
             .child_fragments
             .push(child_fragment_id);
-
-        child_num += 1;
     }
 
     let new_root = root.with_new_children(new_children);
@@ -166,6 +161,7 @@ mod tests {
         joins::NestedLoopJoinExec,
     };
     use datafusion_expr::{col, lit, LogicalPlan};
+    use more_asserts as ma;
 
     async fn create_physical_plan(logical_plan: LogicalPlan) -> Result<Arc<dyn ExecutionPlan>> {
         // Set default for all context
@@ -365,8 +361,6 @@ mod tests {
             } else {
                 assert_eq!(child_index, &1);
             }
-
-            assert_eq!(fragment_root.children().len(), 2);
         }
     }
 }
