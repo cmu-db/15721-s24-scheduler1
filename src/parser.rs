@@ -13,26 +13,26 @@ static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 static FRAGMENT_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
 type QueryId = u64;
-type QueryFragmentId = u64;
+pub type QueryFragmentId = u64;
 
 // Metadata struct for now
 pub struct PhysicalPlanFragment {
     // The id assigned with this [`PhysicalPlanFragment`]
-    fragment_id: QueryFragmentId,
+    pub fragment_id: QueryFragmentId,
 
     // The id of the query which this plan fragment belongs to
-    query_id: QueryId,
+    pub query_id: QueryId,
 
     // the entry into this [`PhysicalPlanFragment`]
-    root: Option<Arc<dyn ExecutionPlan>>,
+    pub root: Option<Arc<dyn ExecutionPlan>>,
 
     // convenience pointers into the parent [`PhysicalPlanFragment`]
-    parent_path_from_root: Vec<Vec<u32>>,
+    pub parent_path_from_root: Vec<Vec<u32>>,
 
     // vector of dependant fragment ids
-    child_fragments: Vec<QueryFragmentId>,
+    pub child_fragments: Vec<QueryFragmentId>,
 
-    parent_fragments: Vec<QueryFragmentId>,
+    pub parent_fragments: Vec<QueryFragmentId>,
 }
 
 // Wrapper function for parsing into fragments
@@ -159,7 +159,7 @@ mod tests {
     use datafusion::physical_plan::{
         coalesce_batches::CoalesceBatchesExec, empty::EmptyExec, filter::FilterExec,
     };
-    use datafusion_expr::{col, lit, LogicalPlan};
+    use datafusion_expr::{col, lit};
 
     async fn build_toy_physical_plan() -> Result<Arc<dyn ExecutionPlan>> {
         // create a logical table source
@@ -226,13 +226,13 @@ mod tests {
         let fragments = parse_into_fragments_wrapper(physical_plan);
 
         assert_eq!(fragments.len(), 1);
-        assert!(!fragments.get(&0).is_none());
+        assert!(fragments.get(&0).is_some());
 
         let plan_fragment = fragments.get(&0).unwrap();
 
         assert_eq!(plan_fragment.query_id, 0);
         assert_eq!(plan_fragment.fragment_id, 0);
-        assert!(!plan_fragment.root.is_none());
+        assert!(plan_fragment.root.is_some());
 
         let frag_node0 = plan_fragment.root.clone().unwrap();
         validate_physical_plan_structure(&frag_node0);
