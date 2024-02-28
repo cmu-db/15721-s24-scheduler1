@@ -177,7 +177,6 @@ mod tests {
         Ok(execution_plan)
     }
 
-
     async fn build_toy_physical_plan() -> Result<Arc<dyn ExecutionPlan>> {
         // create a logical table source
         let schema = Schema::new(vec![
@@ -239,7 +238,6 @@ mod tests {
         ma::assert_ge!(plan_fragment.query_id, 0);
         ma::assert_ge!(plan_fragment.fragment_id, 0);
         assert!(!plan_fragment.root.is_none());
-
 
         let frag_node0 = plan_fragment.root.clone().unwrap();
         validate_toy_physical_plan_structure(&frag_node0);
