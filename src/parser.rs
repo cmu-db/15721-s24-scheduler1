@@ -14,27 +14,27 @@ static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 static FRAGMENT_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
 type QueryId = u64;
-type QueryFragmentId = u64;
+pub type QueryFragmentId = u64;
 
 // Metadata struct for now
 #[derive(Debug, Clone)]
 pub struct PhysicalPlanFragment {
     // The id assigned with this [`PhysicalPlanFragment`]
-    fragment_id: QueryFragmentId,
+    pub fragment_id: QueryFragmentId,
 
     // The id of the query which this plan fragment belongs to
-    query_id: QueryId,
+    pub query_id: QueryId,
 
     // the entry into this [`PhysicalPlanFragment`]
-    root: Option<Arc<dyn ExecutionPlan>>,
+    pub root: Option<Arc<dyn ExecutionPlan>>,
 
     // convenience pointers into the parent [`PhysicalPlanFragment`]
-    parent_path_from_root: Vec<Vec<u32>>,
+    pub parent_path_from_root: Vec<Vec<u32>>,
 
     // vector of dependant fragment ids
-    child_fragments: Vec<QueryFragmentId>,
+    pub child_fragments: Vec<QueryFragmentId>,
 
-    parent_fragments: Vec<QueryFragmentId>,
+    pub parent_fragments: Vec<QueryFragmentId>,
 }
 
 // Wrapper function for parsing into fragments
@@ -177,6 +177,7 @@ mod tests {
         Ok(execution_plan)
     }
 
+
     async fn build_toy_physical_plan() -> Result<Arc<dyn ExecutionPlan>> {
         // create a logical table source
         let schema = Schema::new(vec![
@@ -233,12 +234,12 @@ mod tests {
         let fragments = parse_into_fragments_wrapper(physical_plan).await;
 
         assert_eq!(fragments.len(), 1);
-
         let plan_fragment = fragments.iter().next().unwrap().1;
 
         ma::assert_ge!(plan_fragment.query_id, 0);
         ma::assert_ge!(plan_fragment.fragment_id, 0);
         assert!(!plan_fragment.root.is_none());
+
 
         let frag_node0 = plan_fragment.root.clone().unwrap();
         validate_toy_physical_plan_structure(&frag_node0);

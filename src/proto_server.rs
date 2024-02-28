@@ -1,24 +1,19 @@
 use tonic::{transport::Server, Code, Request, Response, Status};
 
 use datafusion_proto::bytes::physical_plan_from_bytes;
-use scheduler_interface::scheduler_service_server::SchedulerService;
-use scheduler_interface::scheduler_service_server::SchedulerServiceServer;
 
 use datafusion::execution::context::SessionContext;
 
 use datafusion_proto::physical_plan::{AsExecutionPlan, DefaultPhysicalExtensionCodec};
 use datafusion_proto::protobuf;
 
-pub mod scheduler_interface {
-    tonic::include_proto!("scheduler_interface");
-}
-
-use scheduler_interface::*;
+use lib::scheduler::SCHEDULER_INSTANCE;
+use lib::scheduler_interface::scheduler_service_server::SchedulerService;
+use lib::scheduler_interface::scheduler_service_server::SchedulerServiceServer;
+use lib::scheduler_interface::*;
 
 #[derive(Debug, Default)]
 pub struct MyScheduler {}
-
-mod scheduler;
 
 #[tonic::async_trait]
 impl SchedulerService for MyScheduler {
@@ -49,8 +44,10 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
 
-        let query_id =
-            scheduler::SCHEDULER_INSTANCE.schedule_query(physical_plan, metadata.unwrap());
+        let query_id = SCHEDULER_INSTANCE
+            .lock()
+            .unwrap()
+            .schedule_query(physical_plan, metadata.unwrap());
 
         let reply = ScheduleQueryRet { query_id };
         Ok(Response::new(reply))
@@ -63,7 +60,10 @@ impl SchedulerService for MyScheduler {
         let request_content = request.into_inner();
         let query_id = request_content.query_id;
 
-        let query_status = scheduler::SCHEDULER_INSTANCE.query_job_status(query_id);
+        let query_status = SCHEDULER_INSTANCE
+            .lock()
+            .unwrap()
+            .query_job_status(query_id);
 
         let reply = QueryJobStatusRet {
             query_status: query_status.into(),
@@ -83,7 +83,10 @@ impl SchedulerService for MyScheduler {
             let status = Status::new(Code::InvalidArgument, "Query status not specified");
             return Err(status);
         }
-        scheduler::SCHEDULER_INSTANCE.query_execution_done(fragment_id, query_status.unwrap());
+        SCHEDULER_INSTANCE
+            .lock()
+            .unwrap()
+            .query_execution_done(fragment_id, query_status.unwrap());
 
         let reply = QueryExecutionDoneRet {};
         Ok(Response::new(reply))

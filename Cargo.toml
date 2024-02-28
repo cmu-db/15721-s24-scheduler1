@@ -1,9 +1,13 @@
 [package]
-name = "scheduler1"
+name = "cronos"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "lib"
+path = "src/lib.rs"
 
 [[bin]]
 name = "scheduler-api-server"
@@ -15,6 +19,8 @@ datafusion-common = "35.0.0"
 datafusion-expr = "35.0.0"
 datafusion-proto = "35.0.0"
 tonic = "0.11"
+lazy_static = "1.4.0"
+async-recursion = "0.3.1"
 prost = "0.12.3"
 prost-types = "0.12.3"
 tokio = { version = "1.36", features = ["macros", "rt-multi-thread"] }

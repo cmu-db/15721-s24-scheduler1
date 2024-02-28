@@ -1,9 +1,17 @@
+use crate::parser::{PhysicalPlanFragment, QueryFragmentId};
 use crate::scheduler_interface::*;
 use datafusion::physical_plan::ExecutionPlan;
 
+extern crate lazy_static;
+use lazy_static::lazy_static;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 
-pub struct Scheduler {}
+pub struct Scheduler {
+    pub all_fragments: HashMap<QueryFragmentId, PhysicalPlanFragment>,
+    pub pending_fragments: Vec<QueryFragmentId>,
+}
 
 pub enum PipelineBreakers {
     Aggregate,
@@ -44,4 +52,9 @@ impl Scheduler {
     pub fn parse_physical_plan(&self, _physical_plan: &dyn ExecutionPlan) {}
 }
 
-pub static SCHEDULER_INSTANCE: Scheduler = Scheduler {};
+lazy_static! {
+    pub static ref SCHEDULER_INSTANCE: Mutex<Scheduler> = Mutex::new(Scheduler {
+        all_fragments: HashMap::new(),
+        pending_fragments: vec![],
+    });
+}
