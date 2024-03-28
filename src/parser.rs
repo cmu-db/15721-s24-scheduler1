@@ -1,11 +1,12 @@
+use async_recursion::async_recursion;
 use datafusion::datasource::{empty::EmptyTable, DefaultTableSource};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::LogicalPlanBuilder;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{DefaultPhysicalPlanner, PhysicalPlanner};
 use datafusion_common::Result;
-use std::collections::HashMap;
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ type QueryId = u64;
 pub type QueryFragmentId = u64;
 
 // Metadata struct for now
+#[derive(Debug, Clone)]
 pub struct PhysicalPlanFragment {
     // The id assigned with this [`PhysicalPlanFragment`]
     pub fragment_id: QueryFragmentId,
@@ -36,7 +38,7 @@ pub struct PhysicalPlanFragment {
 }
 
 // Wrapper function for parsing into fragments
-fn parse_into_fragments_wrapper(
+async fn parse_into_fragments_wrapper(
     root: Arc<dyn ExecutionPlan>,
 ) -> HashMap<QueryFragmentId, PhysicalPlanFragment> {
     let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
@@ -54,7 +56,7 @@ fn parse_into_fragments_wrapper(
     };
     let path = Vec::<u32>::new();
     output.insert(root_fragment.fragment_id, root_fragment);
-    let new_root = parse_into_fragments(root, fragment_id, &mut output, query_id, path);
+    let new_root = parse_into_fragments(root, fragment_id, &mut output, query_id, path).await;
     output.get_mut(&fragment_id).unwrap().root = Some(new_root);
 
     output
@@ -67,7 +69,8 @@ fn parse_into_fragments_wrapper(
 //   a valid execution node
 // When a node has siblings, it save itself into the output vector (since it is the start of a
 //  fragment) and returns a dummy scan node
-fn parse_into_fragments(
+#[async_recursion]
+async fn parse_into_fragments(
     root: Arc<dyn ExecutionPlan>,
     fragment_id: QueryFragmentId,
     output: &mut HashMap<QueryFragmentId, PhysicalPlanFragment>,
@@ -85,15 +88,13 @@ fn parse_into_fragments(
     if children.len() == 1 {
         path.push(0);
         let new_child =
-            parse_into_fragments(children[0].clone(), fragment_id, output, query_id, path);
+            parse_into_fragments(children[0].clone(), fragment_id, output, query_id, path).await;
         return root.with_new_children(vec![new_child]).unwrap();
     }
 
     let mut new_children = Vec::<Arc<dyn ExecutionPlan>>::new();
 
-    let mut child_num: u32 = 0;
-
-    for child in children {
+    for (child_num, child) in (0_u32..).zip(children.into_iter()) {
         let child_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
         let child_query_fragment = PhysicalPlanFragment {
             query_id,
@@ -105,9 +106,10 @@ fn parse_into_fragments(
         };
         output.insert(child_fragment_id, child_query_fragment);
 
-        let new_child = parse_into_fragments(child, child_fragment_id, output, query_id, vec![]);
+        let new_child =
+            parse_into_fragments(child, child_fragment_id, output, query_id, vec![]).await;
 
-        let dummy_scan_node = create_dummy_scans(&new_child).unwrap();
+        let dummy_scan_node = create_dummy_scans(&new_child).await.unwrap();
         new_children.push(dummy_scan_node);
 
         let child_fragment_ref = output.get_mut(&child_fragment_id).unwrap();
@@ -121,8 +123,6 @@ fn parse_into_fragments(
             .unwrap()
             .child_fragments
             .push(child_fragment_id);
-
-        child_num += 1;
     }
 
     let new_root = root.with_new_children(new_children);
@@ -131,14 +131,12 @@ fn parse_into_fragments(
 
 // Dummy Scan nodes will created using [`plan`], attached to its parents.
 // Update these dummy nodes as results are produced by the execution team.
-#[tokio::main]
 async fn create_dummy_scans(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
     let empty_table = Arc::new(EmptyTable::new(plan.schema()));
     let table_source = Arc::new(DefaultTableSource::new(empty_table));
-    let projection = None;
 
     // create a LogicalPlanBuilder for a table scan
-    let builder = LogicalPlanBuilder::scan("", table_source, projection)?;
+    let builder = LogicalPlanBuilder::scan("dummy", table_source, None)?;
     let plan = builder.build()?;
 
     // Create the physical plan from the logical plan
@@ -147,7 +145,8 @@ async fn create_dummy_scans(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn Exe
 
     let execution_plan = physical_planner
         .create_physical_plan(&plan, &session_state)
-        .await?;
+        .await
+        .unwrap();
 
     Ok(execution_plan)
 }
@@ -156,10 +155,27 @@ async fn create_dummy_scans(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn Exe
 mod tests {
     use crate::parser::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+    use datafusion::logical_expr::JoinType;
     use datafusion::physical_plan::{
         coalesce_batches::CoalesceBatchesExec, empty::EmptyExec, filter::FilterExec,
+        joins::NestedLoopJoinExec,
     };
-    use datafusion_expr::{col, lit};
+    use datafusion_expr::{col, lit, LogicalPlan};
+    use more_asserts as ma;
+
+    async fn create_physical_plan(logical_plan: LogicalPlan) -> Result<Arc<dyn ExecutionPlan>> {
+        // Set default for all context
+        let physical_planner = DefaultPhysicalPlanner::default();
+        let session_state =
+            SessionState::new_with_config_rt(Default::default(), Default::default());
+
+        // Create the physical plan from the logical plan
+        let execution_plan = physical_planner
+            .create_physical_plan(&logical_plan, &session_state)
+            .await?;
+
+        Ok(execution_plan)
+    }
 
     async fn build_toy_physical_plan() -> Result<Arc<dyn ExecutionPlan>> {
         // create a logical table source
@@ -180,20 +196,11 @@ mod tests {
         let logical_plan = builder
             .filter(col("id").gt(lit(500)))? // WHERE id > 500
             .build()?;
-        // Set default for all context
-        let physical_planner = DefaultPhysicalPlanner::default();
-        let session_state =
-            SessionState::new_with_config_rt(Default::default(), Default::default());
 
-        // Create the physical plan from the logical plan
-        let execution_plan = physical_planner
-            .create_physical_plan(&logical_plan, &session_state)
-            .await?;
-
-        Ok(execution_plan)
+        create_physical_plan(logical_plan).await
     }
 
-    fn validate_physical_plan_structure(root_node: &Arc<dyn ExecutionPlan>) {
+    fn validate_toy_physical_plan_structure(root_node: &Arc<dyn ExecutionPlan>) {
         root_node
             .as_any()
             .downcast_ref::<CoalesceBatchesExec>()
@@ -220,25 +227,139 @@ mod tests {
         let physical_plan = build_toy_physical_plan().await.unwrap();
         println!("Physical Plan: {:#?}", physical_plan);
         assert_eq!(physical_plan.children().len(), 1);
-        validate_physical_plan_structure(&physical_plan);
+        validate_toy_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragments = parse_into_fragments_wrapper(physical_plan);
+        let fragments = parse_into_fragments_wrapper(physical_plan).await;
 
         assert_eq!(fragments.len(), 1);
-        assert!(fragments.get(&0).is_some());
+        let plan_fragment = fragments.iter().next().unwrap().1;
 
-        let plan_fragment = fragments.get(&0).unwrap();
-
-        assert_eq!(plan_fragment.query_id, 0);
-        assert_eq!(plan_fragment.fragment_id, 0);
-        assert!(plan_fragment.root.is_some());
+        ma::assert_ge!(plan_fragment.query_id, 0);
+        ma::assert_ge!(plan_fragment.fragment_id, 0);
+        assert!(!plan_fragment.root.is_none());
 
         let frag_node0 = plan_fragment.root.clone().unwrap();
-        validate_physical_plan_structure(&frag_node0);
+        validate_toy_physical_plan_structure(&frag_node0);
 
         assert!(plan_fragment.child_fragments.is_empty());
         assert!(plan_fragment.parent_fragments.is_empty());
         assert!(plan_fragment.parent_path_from_root.is_empty());
+    }
+
+    async fn build_basic_physical_plan() -> Result<Arc<dyn ExecutionPlan>> {
+        // create a logical table source
+        let price_schema = Schema::new(vec![
+            Field::new("item_id", DataType::Int32, true),
+            Field::new("price", DataType::Utf8, true),
+        ]);
+        let order_schema = Schema::new(vec![
+            Field::new("order_id", DataType::Int32, true),
+            Field::new("item_id", DataType::Int32, true),
+            Field::new("quantity", DataType::Int32, true),
+        ]);
+        let price_table = Arc::new(EmptyTable::new(SchemaRef::new(price_schema)));
+        let price_table_source = Arc::new(DefaultTableSource::new(price_table));
+
+        let order_table = Arc::new(EmptyTable::new(SchemaRef::new(order_schema)));
+        let order_table_source = Arc::new(DefaultTableSource::new(order_table));
+
+        let exprs = vec![col("price.item_id").eq(col("order.item_id"))];
+
+        // create a LogicalPlanBuilder for a table scan
+        let right_plan = LogicalPlanBuilder::scan("price", price_table_source, None)?.build()?;
+
+        let plan = LogicalPlanBuilder::scan("order", order_table_source, None)?
+            .join_on(right_plan, JoinType::Inner, exprs)?
+            .build()?;
+
+        create_physical_plan(plan).await
+    }
+
+    fn validate_basic_physical_plan_structure(root_node: &Arc<dyn ExecutionPlan>) {
+        root_node
+            .as_any()
+            .downcast_ref::<NestedLoopJoinExec>()
+            .unwrap();
+
+        let node0_children = root_node.children();
+        assert_eq!(node0_children.len(), 2);
+
+        let node1 = node0_children.first().unwrap();
+        node1.as_any().downcast_ref::<EmptyExec>().unwrap();
+
+        let node2 = node0_children.get(1).unwrap();
+        node2.as_any().downcast_ref::<EmptyExec>().unwrap();
+
+        assert_eq!(node1.children().len(), 0);
+        assert_eq!(node2.children().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn basic_test() {
+        let physical_plan = build_basic_physical_plan().await.unwrap();
+        println!("Physical Plan: {:#?}", physical_plan);
+        validate_basic_physical_plan_structure(&physical_plan);
+
+        // Returns a hash map from query fragment ID to physical plan fragment structs
+        let fragments = parse_into_fragments_wrapper(physical_plan).await;
+
+        assert_eq!(fragments.len(), 3);
+
+        let mut root_fragment = None;
+        let mut child_fragment_vec = Vec::<PhysicalPlanFragment>::new();
+        for (_, fragment) in fragments {
+            assert!(fragment.root.is_some());
+            if fragment.root.as_ref().unwrap().children().len() == 2 {
+                root_fragment = Some(fragment);
+            } else {
+                child_fragment_vec.push(fragment);
+            }
+        }
+        assert_eq!(child_fragment_vec.len(), 2);
+
+        let root_fragment = root_fragment.unwrap();
+
+        let root_child_fragments: &Vec<QueryFragmentId> = root_fragment.child_fragments.as_ref();
+
+        for fragment in child_fragment_vec {
+            // Check that each fragment that is not the root is included as a
+            // child fragment of the root
+            assert!(root_child_fragments
+                .iter()
+                .position(|&x| x == fragment.fragment_id)
+                .is_some());
+
+            // Each child fragment should have one parent fragment
+            assert_eq!(fragment.parent_fragments.len(), 1);
+
+            // The parent fragment should be the root
+            assert_eq!(
+                *fragment.parent_fragments.iter().next().unwrap(),
+                root_fragment.fragment_id
+            );
+
+            assert_eq!(fragment.parent_path_from_root.len(), 1);
+
+            let path_vec = fragment.parent_path_from_root.first().unwrap();
+
+            assert_eq!(path_vec.len(), 1);
+
+            let child_index = path_vec.iter().next().unwrap();
+
+            let fragment_root = fragment.root.as_ref().unwrap();
+
+            // The left plan is the one that scans the order table. Check if
+            // they are assigned the correct path.
+            if fragment_root
+                .schema()
+                .column_with_name("quantity")
+                .is_some()
+            {
+                assert_eq!(child_index, &0);
+            } else {
+                assert_eq!(child_index, &1);
+            }
+        }
     }
 }
