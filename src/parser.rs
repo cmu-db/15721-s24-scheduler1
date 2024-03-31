@@ -5,10 +5,12 @@ use datafusion::logical_expr::LogicalPlanBuilder;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{DefaultPhysicalPlanner, PhysicalPlanner};
 use datafusion_common::Result;
+use datafusion_proto::protobuf::PhysicalScalarUdfNode;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 static FRAGMENT_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
@@ -34,12 +36,55 @@ pub struct PhysicalPlanFragment {
     // vector of dependant fragment ids
     pub child_fragments: Vec<QueryFragmentId>,
 
+    // Vector of dependee Fragments
     pub parent_fragments: Vec<QueryFragmentId>,
+
+    // Query level priority provided with the query
+    pub query_priority: i64,
+
+    // Time when this fragment was enqueued
+    pub enqueued_time: Option<SystemTime>,
+
+    // Cost of running this fragment
+    pub fragment_cost: Option<usize>,
+}
+
+// Function to populate the cost of running a fragment.
+// Currently it goes through all the execution plan nodes in the fragment
+// and sums up the number of rows based on provided statistics.
+// It can later used for sophisticated costs provided by the optimizer
+async fn populate_fragment_cost(fragment: &mut PhysicalPlanFragment) {
+    let mut cur_cost = 0;
+    let mut node = fragment.root.clone().unwrap();
+    loop {
+        let stats_option = node.statistics();
+        match stats_option {
+            Ok(stats) => match stats.total_byte_size {
+                datafusion_common::stats::Precision::Exact(val) => {
+                    cur_cost += val;
+                }
+                datafusion_common::stats::Precision::Inexact(val) => {
+                    cur_cost += val;
+                }
+                datafusion_common::stats::Precision::Absent => {}
+            },
+            Err(_) => {}
+        }
+        if node.children().len() == 0 {
+            break;
+        }
+        assert!(node.children().len() == 1);
+        node = node.children()[0].clone();
+    }
+    if cur_cost != 0 {
+        fragment.fragment_cost = Some(cur_cost);
+    }
 }
 
 // Wrapper function for parsing into fragments
 async fn parse_into_fragments_wrapper(
     root: Arc<dyn ExecutionPlan>,
+    priority: i64,
 ) -> HashMap<QueryFragmentId, PhysicalPlanFragment> {
     let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
     let fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
@@ -53,11 +98,16 @@ async fn parse_into_fragments_wrapper(
         parent_path_from_root: vec![],
         child_fragments: vec![],
         parent_fragments: vec![],
+        query_priority: priority,
+        enqueued_time: None,
+        fragment_cost: None,
     };
     let path = Vec::<u32>::new();
     output.insert(root_fragment.fragment_id, root_fragment);
-    let new_root = parse_into_fragments(root, fragment_id, &mut output, query_id, path).await;
+    let new_root =
+        parse_into_fragments(root, fragment_id, &mut output, query_id, path, priority).await;
     output.get_mut(&fragment_id).unwrap().root = Some(new_root);
+    populate_fragment_cost(output.get_mut(&fragment_id).unwrap()).await;
 
     output
 }
@@ -76,6 +126,7 @@ async fn parse_into_fragments(
     output: &mut HashMap<QueryFragmentId, PhysicalPlanFragment>,
     query_id: u64,
     mut path: Vec<u32>,
+    priority: i64,
 ) -> Arc<dyn ExecutionPlan> {
     let children = root.children();
 
@@ -87,8 +138,15 @@ async fn parse_into_fragments(
     // Single child just go down
     if children.len() == 1 {
         path.push(0);
-        let new_child =
-            parse_into_fragments(children[0].clone(), fragment_id, output, query_id, path).await;
+        let new_child = parse_into_fragments(
+            children[0].clone(),
+            fragment_id,
+            output,
+            query_id,
+            path,
+            priority,
+        )
+        .await;
         return root.with_new_children(vec![new_child]).unwrap();
     }
 
@@ -103,11 +161,15 @@ async fn parse_into_fragments(
             parent_path_from_root: vec![],
             child_fragments: vec![],
             parent_fragments: vec![fragment_id],
+            query_priority: priority,
+            enqueued_time: None,
+            fragment_cost: None,
         };
         output.insert(child_fragment_id, child_query_fragment);
 
         let new_child =
-            parse_into_fragments(child, child_fragment_id, output, query_id, vec![]).await;
+            parse_into_fragments(child, child_fragment_id, output, query_id, vec![], priority)
+                .await;
 
         let dummy_scan_node = create_dummy_scans(&new_child).await.unwrap();
         new_children.push(dummy_scan_node);
@@ -117,6 +179,7 @@ async fn parse_into_fragments(
         new_path.push(child_num);
         child_fragment_ref.parent_path_from_root.push(new_path);
         child_fragment_ref.root = Some(new_child);
+        populate_fragment_cost(output.get_mut(&child_fragment_id).unwrap()).await;
 
         output
             .get_mut(&fragment_id)
@@ -230,7 +293,7 @@ mod tests {
         validate_toy_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragments = parse_into_fragments_wrapper(physical_plan).await;
+        let fragments = parse_into_fragments_wrapper(physical_plan, 0).await;
 
         assert_eq!(fragments.len(), 1);
         let plan_fragment = fragments.iter().next().unwrap().1;
@@ -302,7 +365,7 @@ mod tests {
         validate_basic_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragments = parse_into_fragments_wrapper(physical_plan).await;
+        let fragments = parse_into_fragments_wrapper(physical_plan, 0).await;
 
         assert_eq!(fragments.len(), 3);
 
