@@ -38,7 +38,7 @@ pub struct PhysicalPlanFragment {
 }
 
 // Wrapper function for parsing into fragments
-async fn parse_into_fragments_wrapper(
+pub async fn parse_into_fragments_wrapper(
     root: Arc<dyn ExecutionPlan>,
 ) -> HashMap<QueryFragmentId, PhysicalPlanFragment> {
     let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
