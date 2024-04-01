@@ -55,8 +55,11 @@ pub struct PhysicalPlanFragment {
 // It can later used for sophisticated costs provided by the optimizer
 async fn populate_fragment_cost(fragment: &mut PhysicalPlanFragment) {
     let mut cur_cost = 0;
-    let mut node = fragment.root.clone().unwrap();
-    loop {
+    let mut root = fragment.root.clone().unwrap();
+
+    let mut queue = vec![root];
+    while !queue.is_empty() {
+        let mut node = queue.pop().unwrap();
         let stats_option = node.statistics();
         match stats_option {
             Ok(stats) => match stats.total_byte_size {
@@ -70,11 +73,9 @@ async fn populate_fragment_cost(fragment: &mut PhysicalPlanFragment) {
             },
             Err(_) => {}
         }
-        if node.children().len() == 0 {
-            break;
+        for child in node.children() {
+            queue.push(child);
         }
-        assert!(node.children().len() == 1);
-        node = node.children()[0].clone();
     }
     if cur_cost != 0 {
         fragment.fragment_cost = Some(cur_cost);

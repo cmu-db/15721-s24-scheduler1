@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+#[derive(Debug)]
 pub struct Scheduler {
     pub all_fragments: HashMap<QueryFragmentId, PhysicalPlanFragment>,
     pub pending_fragments: Vec<QueryFragmentId>,
