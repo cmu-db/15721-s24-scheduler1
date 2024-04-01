@@ -37,6 +37,7 @@ pub fn get_priority_from_fragment(fragment: &PhysicalPlanFragment) -> i128 {
     priority + cost_offset
 }
 
+/// Get the plan with the highest priorty from the queue
 pub fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
     let mut scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
 
