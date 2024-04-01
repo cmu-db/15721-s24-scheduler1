@@ -43,7 +43,7 @@ pub fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
     let mut ref_id: Option<QueryFragmentId> = None;
     let mut ref_priority: i128 = 0;
     for fragment_id in &scheduler_instance.pending_fragments {
-        let frag = scheduler_instance.all_fragments.get(&fragment_id).unwrap();
+        let frag = scheduler_instance.all_fragments.get(fragment_id).unwrap();
         let priority = get_priority_from_fragment(frag);
         if priority > ref_priority || ref_id.is_none() {
             ref_id = Some(*fragment_id);
@@ -141,17 +141,20 @@ mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
     use datafusion::datasource::{empty::EmptyTable, DefaultTableSource};
     use datafusion::execution::context::SessionState;
-    use datafusion::logical_expr::JoinType;
+
+    use datafusion::execution::object_store::ObjectStoreUrl;
     use datafusion::logical_expr::LogicalPlanBuilder;
+    use datafusion::physical_plan::joins::NestedLoopJoinExec;
     use datafusion::physical_plan::ExecutionPlan;
     use datafusion::physical_plan::{
         coalesce_batches::CoalesceBatchesExec, empty::EmptyExec, filter::FilterExec,
-        joins::NestedLoopJoinExec,
     };
     use datafusion::physical_planner::{DefaultPhysicalPlanner, PhysicalPlanner};
     use datafusion_common::Result;
+    use datafusion_common::Statistics;
+    use datafusion_expr::JoinType;
     use datafusion_expr::{col, lit, LogicalPlan};
-    use datafusion_proto::protobuf::PhysicalScalarUdfNode;
+
     use more_asserts as ma;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -238,7 +241,7 @@ mod tests {
         map.insert(0, fragment);
         add_fragments_to_scheduler(map);
         let queued_fragment = get_plan_from_queue().unwrap();
-        assert!(!queued_fragment.root.is_none());
+        assert!(queued_fragment.root.is_some());
         ma::assert_ge!(queued_fragment.query_id, 0);
         ma::assert_ge!(queued_fragment.fragment_id, 0);
 
@@ -249,5 +252,131 @@ mod tests {
         assert!(queued_fragment.parent_fragments.is_empty());
         assert!(queued_fragment.parent_path_from_root.is_empty());
         assert!(queued_fragment.enqueued_time.is_some());
+
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        assert_eq!(scheduler_instance.pending_fragments.len(), 0);
+    }
+
+    async fn build_basic_physical_plan() -> Result<Arc<dyn ExecutionPlan>> {
+        // create a logical table source
+        let price_schema = Schema::new(vec![
+            Field::new("item_id", DataType::Int32, true),
+            Field::new("price", DataType::Utf8, true),
+        ]);
+        let order_schema = Schema::new(vec![
+            Field::new("order_id", DataType::Int32, true),
+            Field::new("item_id", DataType::Int32, true),
+            Field::new("quantity", DataType::Int32, true),
+        ]);
+        let price_table = Arc::new(EmptyTable::new(SchemaRef::new(price_schema)));
+        let price_table_source = Arc::new(DefaultTableSource::new(price_table));
+
+        let order_table = Arc::new(EmptyTable::new(SchemaRef::new(order_schema)));
+        let order_table_source = Arc::new(DefaultTableSource::new(order_table));
+
+        let exprs = vec![col("price.item_id").eq(col("order.item_id"))];
+
+        // create a LogicalPlanBuilder for a table scan
+        let right_plan = LogicalPlanBuilder::scan("price", price_table_source, None)?.build()?;
+
+        let plan = LogicalPlanBuilder::scan("order", order_table_source, None)?
+            .join_on(right_plan, JoinType::Inner, exprs)?
+            .build()?;
+
+        create_physical_plan(plan).await
+    }
+
+    fn validate_basic_physical_plan_structure(root_node: &Arc<dyn ExecutionPlan>) {
+        root_node
+            .as_any()
+            .downcast_ref::<NestedLoopJoinExec>()
+            .unwrap();
+
+        let node0_children = root_node.children();
+        assert_eq!(node0_children.len(), 2);
+
+        let node1 = node0_children.first().unwrap();
+        node1.as_any().downcast_ref::<EmptyExec>().unwrap();
+
+        let node2 = node0_children.get(1).unwrap();
+        node2.as_any().downcast_ref::<EmptyExec>().unwrap();
+
+        assert_eq!(node1.children().len(), 0);
+        assert_eq!(node2.children().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn basic_test() {
+        let physical_plan = build_basic_physical_plan().await.unwrap();
+        println!("Physical Plan: {:#?}", physical_plan);
+        validate_basic_physical_plan_structure(&physical_plan);
+
+        // Returns a hash map from query fragment ID to physical plan fragment structs
+        let fragment_map = parse_into_fragments_wrapper(physical_plan, 0).await;
+
+        add_fragments_to_scheduler(fragment_map);
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        assert_eq!(scheduler_instance.pending_fragments.len(), 2);
+        drop(scheduler_instance);
+
+        let mut child_fragment_vec = Vec::<PhysicalPlanFragment>::new();
+
+        let mut queued_fragment = get_plan_from_queue().unwrap();
+        assert!(queued_fragment.root.is_some());
+        child_fragment_vec.push(queued_fragment);
+        queued_fragment = get_plan_from_queue().unwrap();
+        assert!(queued_fragment.root.is_some());
+        child_fragment_vec.push(queued_fragment);
+        assert!(get_plan_from_queue().is_none());
+
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        assert_eq!(scheduler_instance.pending_fragments.len(), 0);
+        drop(scheduler_instance);
+
+        finish_fragment(
+            child_fragment_vec[0].fragment_id,
+            FileScanConfig {
+                object_store_url: ObjectStoreUrl::parse("https://example.net").unwrap(),
+                file_schema: SchemaRef::new(Schema::empty()),
+                file_groups: vec![],
+                statistics: Statistics::new_unknown(&Schema::empty()),
+                projection: None,
+                limit: None,
+                table_partition_cols: vec![],
+                output_ordering: vec![],
+            },
+        );
+
+        assert!(get_plan_from_queue().is_none());
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        assert_eq!(scheduler_instance.pending_fragments.len(), 0);
+        drop(scheduler_instance);
+
+        finish_fragment(
+            child_fragment_vec[1].fragment_id,
+            FileScanConfig {
+                object_store_url: ObjectStoreUrl::parse("https://example.net").unwrap(),
+                file_schema: SchemaRef::new(Schema::empty()),
+                file_groups: vec![],
+                statistics: Statistics::new_unknown(&Schema::empty()),
+                projection: None,
+                limit: None,
+                table_partition_cols: vec![],
+                output_ordering: vec![],
+            },
+        );
+
+        let root_fragments = get_plan_from_queue().unwrap();
+
+        assert!(get_plan_from_queue().is_none());
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        assert_eq!(scheduler_instance.pending_fragments.len(), 0);
+        drop(scheduler_instance);
+        let mut num_child = 0;
+        for child in root_fragments.root.unwrap().children() {
+            child.as_any().downcast_ref::<ArrowExec>().unwrap();
+            num_child += 1;
+        }
+        assert_eq!(num_child, 2);
     }
 }

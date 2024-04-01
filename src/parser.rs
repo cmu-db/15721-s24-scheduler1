@@ -5,7 +5,6 @@ use datafusion::logical_expr::LogicalPlanBuilder;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{DefaultPhysicalPlanner, PhysicalPlanner};
 use datafusion_common::Result;
-use datafusion_proto::protobuf::PhysicalScalarUdfNode;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -55,11 +54,10 @@ pub struct PhysicalPlanFragment {
 // It can later used for sophisticated costs provided by the optimizer
 async fn populate_fragment_cost(fragment: &mut PhysicalPlanFragment) {
     let mut cur_cost = 0;
-    let mut root = fragment.root.clone().unwrap();
+    let root = fragment.root.clone().unwrap();
 
     let mut queue = vec![root];
-    while !queue.is_empty() {
-        let mut node = queue.pop().unwrap();
+    while let Some(node) = queue.pop() {
         let stats_option = node.statistics();
         match stats_option {
             Ok(stats) => match stats.total_byte_size {
@@ -83,7 +81,7 @@ async fn populate_fragment_cost(fragment: &mut PhysicalPlanFragment) {
 }
 
 // Wrapper function for parsing into fragments
-async fn parse_into_fragments_wrapper(
+pub async fn parse_into_fragments_wrapper(
     root: Arc<dyn ExecutionPlan>,
     priority: i64,
 ) -> HashMap<QueryFragmentId, PhysicalPlanFragment> {
@@ -121,7 +119,7 @@ async fn parse_into_fragments_wrapper(
 // When a node has siblings, it save itself into the output vector (since it is the start of a
 //  fragment) and returns a dummy scan node
 #[async_recursion]
-async fn parse_into_fragments(
+pub async fn parse_into_fragments(
     root: Arc<dyn ExecutionPlan>,
     fragment_id: QueryFragmentId,
     output: &mut HashMap<QueryFragmentId, PhysicalPlanFragment>,
@@ -301,7 +299,7 @@ mod tests {
 
         ma::assert_ge!(plan_fragment.query_id, 0);
         ma::assert_ge!(plan_fragment.fragment_id, 0);
-        assert!(!plan_fragment.root.is_none());
+        assert!(plan_fragment.root.is_some());
 
         let frag_node0 = plan_fragment.root.clone().unwrap();
         validate_toy_physical_plan_structure(&frag_node0);
@@ -391,15 +389,14 @@ mod tests {
             // child fragment of the root
             assert!(root_child_fragments
                 .iter()
-                .position(|&x| x == fragment.fragment_id)
-                .is_some());
+                .any(|&x| x == fragment.fragment_id));
 
             // Each child fragment should have one parent fragment
             assert_eq!(fragment.parent_fragments.len(), 1);
 
             // The parent fragment should be the root
             assert_eq!(
-                *fragment.parent_fragments.iter().next().unwrap(),
+                *fragment.parent_fragments.first().unwrap(),
                 root_fragment.fragment_id
             );
 
