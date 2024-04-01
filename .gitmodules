@@ -1,3 +1,3 @@
-[submodule "third-party/substrait"]
-	path = proto/substrait
-	url = https://github.com/substrait-io/substrait
+[submodule "arrow-datafusion"]
+	path = arrow-datafusion
+	url = https://github.com/apache/arrow-datafusion

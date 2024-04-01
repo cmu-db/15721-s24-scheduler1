@@ -2,6 +2,9 @@ use async_recursion::async_recursion;
 use datafusion::datasource::{empty::EmptyTable, DefaultTableSource};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::LogicalPlanBuilder;
+use datafusion::physical_plan::joins::{
+    HashBuildExec, HashJoinExec, HashProbeExec, NestedLoopJoinExec,
+};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{DefaultPhysicalPlanner, PhysicalPlanner};
 use datafusion_common::Result;
@@ -112,7 +115,7 @@ pub async fn parse_into_fragments_wrapper(
 }
 
 // Turn this into DAG traversal with book keeping
-// Recursively return child note to the parent node
+// Recursively return child node to the parent node
 //  A child node is either a:
 //   dummy scan node (to be modified data is executed and returned) or
 //   a valid execution node
@@ -151,6 +154,60 @@ pub async fn parse_into_fragments(
 
     let mut new_children = Vec::<Arc<dyn ExecutionPlan>>::new();
 
+    if let Some(node) = root.as_any().downcast_ref::<HashJoinExec>() {
+        let build_side = node.left.clone();
+
+        let build_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+        let build_fragment = PhysicalPlanFragment {
+            query_id,
+            fragment_id: build_fragment_id,
+            root: None,
+            parent_path_from_root: Vec::new(),
+            child_fragments: Vec::new(),
+            parent_fragments: vec![fragment_id],
+            enqueued_time: None,
+            fragment_cost: None,
+            query_priority: 0,
+        };
+        output.insert(build_fragment_id, build_fragment);
+
+        let parsed_build_side =
+            parse_into_fragments(build_side, build_fragment_id, output, query_id, Vec::new(), priority).await;
+
+        let build_side_new = HashBuildExec::try_new(
+            parsed_build_side.clone(),
+            node.on.iter().map(|on| on.0.clone()).collect(),
+            None,
+            &node.join_type,
+            None,
+            node.mode,
+            node.null_equals_null,
+        )
+        .unwrap();
+
+        let build_fragment_ref = output.get_mut(&build_fragment_id).unwrap();
+        let mut new_path = path.clone();
+        new_path.push(0);
+        build_fragment_ref.parent_path_from_root.push(new_path);
+        build_fragment_ref.root = Some(Arc::new(build_side_new));
+
+        let probe_side = node.right.clone();
+        let probe_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+        let parsed_probe_side =
+            parse_into_fragments(probe_side, probe_fragment_id, output, query_id, Vec::new(), priority).await;
+        let new_root = HashProbeExec::try_new(
+            parsed_build_side,
+            parsed_probe_side,
+            node.on.clone(),
+            node.filter.clone(),
+            &node.join_type,
+            None,
+            node.mode,
+            node.null_equals_null,
+        );
+        return Arc::new(new_root.unwrap());
+    }
+
     for (child_num, child) in (0_u32..).zip(children.into_iter()) {
         let child_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
         let child_query_fragment = PhysicalPlanFragment {
@@ -173,6 +230,7 @@ pub async fn parse_into_fragments(
         let dummy_scan_node = create_dummy_scans(&new_child).await.unwrap();
         new_children.push(dummy_scan_node);
 
+        // Get a reference to the newly created child fragment
         let child_fragment_ref = output.get_mut(&child_fragment_id).unwrap();
         let mut new_path = path.clone();
         new_path.push(child_num);
@@ -217,11 +275,21 @@ async fn create_dummy_scans(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn Exe
 mod tests {
     use crate::parser::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+    use datafusion::execution::context::{SessionConfig, SessionContext};
+    use datafusion::execution::options::CsvReadOptions;
+    use datafusion::execution::TaskContext;
     use datafusion::logical_expr::JoinType;
+    use datafusion::physical_plan::joins::utils::JoinOn;
+    use datafusion::physical_plan::joins::PartitionMode;
+    use datafusion::physical_plan::memory::MemoryExec;
+    use datafusion::physical_plan::sorts::sort::SortExec;
+    use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
+    use datafusion::physical_plan::test::build_table_i32;
     use datafusion::physical_plan::{
         coalesce_batches::CoalesceBatchesExec, empty::EmptyExec, filter::FilterExec,
         joins::NestedLoopJoinExec,
     };
+    use datafusion::prelude::*;
     use datafusion_expr::{col, lit, LogicalPlan};
     use more_asserts as ma;
 
@@ -422,5 +490,118 @@ mod tests {
                 assert_eq!(child_index, &1);
             }
         }
+    }
+
+    // fn prepare_task_ctx(batch_size: usize) -> Arc<TaskContext> {
+    //     let session_config = SessionConfig::default().with_batch_size(batch_size);
+    //     Arc::new(TaskContext::default().with_session_config(session_config))
+    // }
+
+    // fn build_table(
+    //     a: (&str, &Vec<i32>),
+    //     b: (&str, &Vec<i32>),
+    //     c: (&str, &Vec<i32>),
+    // ) -> Arc<dyn ExecutionPlan> {
+    //     let batch = build_table_i32(a, b, c);
+    //     let schema = batch.schema();
+    //     Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
+    // }
+
+    // fn join(
+    //     left: Arc<dyn ExecutionPlan>,
+    //     right: Arc<dyn ExecutionPlan>,
+    //     on: JoinOn,
+    //     join_type: &JoinType,
+    //     null_equals_null: bool,
+    // ) -> Result<HashJoinExec> {
+    //     HashJoinExec::try_new(
+    //         left,
+    //         right,
+    //         on,
+    //         None,
+    //         join_type,
+    //         None,
+    //         PartitionMode::CollectLeft,
+    //         null_equals_null,
+    //     )
+    // }
+
+    async fn build_plan_with_hash_join() -> Result<Arc<dyn ExecutionPlan>> {
+        let ctx = SessionContext::new();
+        ctx.register_csv(
+            "orders",
+            "src/example_data/orders.csv",
+            CsvReadOptions::new(),
+        )
+        .await?;
+        ctx.register_csv(
+            "prices",
+            "src/example_data/prices.csv",
+            CsvReadOptions::new(),
+        )
+        .await?;
+
+        // create a plan to run a SQL query
+        let sql = "SELECT a.*, b.price from orders a inner join prices b on a.item_id = b.item_id order by a.order_id";
+        let logical_plan = ctx.state().create_logical_plan(sql).await?;
+        let physical_plan = ctx.state().create_physical_plan(&logical_plan).await?;
+        Ok(physical_plan)
+    }
+
+    async fn validate_hash_join_plan(root_node: &Arc<dyn ExecutionPlan>) {
+        root_node
+            .as_any()
+            .downcast_ref::<SortPreservingMergeExec>()
+            .unwrap();
+        let node0_children = root_node.children();
+
+        assert_eq!(node0_children.len(), 1);
+
+        let node1 = node0_children.first().unwrap();
+        node1.as_any().downcast_ref::<SortExec>().unwrap();
+
+        let node1_children = node1.children();
+        assert_eq!(node1_children.len(), 1);
+
+        let node2 = node1_children.first().unwrap();
+        node2
+            .as_any()
+            .downcast_ref::<CoalesceBatchesExec>()
+            .unwrap();
+
+        let node2_children = node2.children();
+        assert_eq!(node2_children.len(), 1);
+
+        let node3 = node2_children.first().unwrap();
+        node3.as_any().downcast_ref::<HashJoinExec>().unwrap();
+
+        let node3_children = node3.children();
+        assert_eq!(node3_children.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_left_deep_join() {
+        let plan = build_plan_with_hash_join().await.unwrap();
+        validate_hash_join_plan(&plan);
+
+        let fragments = parse_into_fragments_wrapper(plan, 0).await;
+        print!("{:?}", fragments);
+
+        let mut found_hash_build = false;
+
+        for (_, fragment) in fragments {
+            assert!(fragment.root.is_some());
+            if let Some(_) = fragment
+                .root
+                .clone()
+                .unwrap()
+                .as_any()
+                .downcast_ref::<HashBuildExec>()
+            {
+                found_hash_build = true;
+            }
+        }
+
+        assert!(found_hash_build);
     }
 }
