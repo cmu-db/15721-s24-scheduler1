@@ -26,10 +26,14 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-    - name: Initialize git submodules
+    - name: Initialize scheduler git submodules
       run: git submodule init
     - name: Fetch git submodules
       run: git submodule update
+    - name: Initialize datafusion git submodules
+      run: cd arrow-datafusion && git submodule init
+    - name: Fetch datafusion git submodules
+      run: cd arrow-datafusion && git submodule update
     - name: Format check
       run: cargo fmt --all -- --check
     - name: Generate code coverage
