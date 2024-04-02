@@ -21,6 +21,10 @@ jobs:
       run: rustup update stable && rustup default stable && rustup component add rustfmt
     - name: Install cargo-llvm-cov
       uses: taiki-e/install-action@cargo-llvm-cov
+    - name: Initialize git submodules
+      run: git submodule init
+    - name: Fetch git submodules
+      run: git submodule update
     - name: Format check
       run: cargo fmt --all -- --check
     - name: Generate code coverage
