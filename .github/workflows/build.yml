@@ -21,6 +21,8 @@ jobs:
       run: rustup update stable && rustup default stable && rustup component add rustfmt
     - name: Install cargo-llvm-cov
       uses: taiki-e/install-action@cargo-llvm-cov
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v3
     - uses: actions/setup-python@v5
       with:
         python-version: '3.10'
