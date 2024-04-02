@@ -37,7 +37,7 @@ jobs:
     - name: Format check
       run: cargo fmt --all -- --check
     - name: Generate code coverage
-      run: cd scheduler && cargo llvm-cov --workspace --codecov --output-path lcov.info
+      run: cd scheduler && cargo llvm-cov --codecov --output-path lcov.info
     - name: Archive code coverage results
       uses: actions/upload-artifact@v4
       with:
