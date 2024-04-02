@@ -502,40 +502,6 @@ mod tests {
         }
     }
 
-    // fn prepare_task_ctx(batch_size: usize) -> Arc<TaskContext> {
-    //     let session_config = SessionConfig::default().with_batch_size(batch_size);
-    //     Arc::new(TaskContext::default().with_session_config(session_config))
-    // }
-
-    // fn build_table(
-    //     a: (&str, &Vec<i32>),
-    //     b: (&str, &Vec<i32>),
-    //     c: (&str, &Vec<i32>),
-    // ) -> Arc<dyn ExecutionPlan> {
-    //     let batch = build_table_i32(a, b, c);
-    //     let schema = batch.schema();
-    //     Arc::new(MemoryExec::try_new(&[vec![batch]], schema, None).unwrap())
-    // }
-
-    // fn join(
-    //     left: Arc<dyn ExecutionPlan>,
-    //     right: Arc<dyn ExecutionPlan>,
-    //     on: JoinOn,
-    //     join_type: &JoinType,
-    //     null_equals_null: bool,
-    // ) -> Result<HashJoinExec> {
-    //     HashJoinExec::try_new(
-    //         left,
-    //         right,
-    //         on,
-    //         None,
-    //         join_type,
-    //         None,
-    //         PartitionMode::CollectLeft,
-    //         null_equals_null,
-    //     )
-    // }
-
     async fn build_plan_with_hash_join() -> Result<Arc<dyn ExecutionPlan>> {
         let ctx = SessionContext::new();
         ctx.register_csv(
