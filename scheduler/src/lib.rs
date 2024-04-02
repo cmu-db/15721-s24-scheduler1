@@ -1,5 +1,6 @@
 mod parser;
 mod queue;
+mod integration;
 
 pub mod scheduler;
 pub mod scheduler_interface {

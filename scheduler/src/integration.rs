@@ -28,7 +28,7 @@ mod tests {
         .await?;
 
         // create a plan to run a SQL query
-        let sql = "SELECT a.*, b.price from orders a inner join prices b on a.item_id = b.item_id order by a.order_id";
+        let sql = "SELECT a.*, b.price from orders a, prices b order by a.order_id";
         let logical_plan = ctx.state().create_logical_plan(sql).await?;
         let physical_plan = ctx.state().create_physical_plan(&logical_plan).await?;
 
