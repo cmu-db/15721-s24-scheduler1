@@ -21,21 +21,34 @@ jobs:
       run: rustup update stable && rustup default stable && rustup component add rustfmt
     - name: Install cargo-llvm-cov
       uses: taiki-e/install-action@cargo-llvm-cov
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v3
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Initialize scheduler git submodules
+      run: git submodule init
+    - name: Fetch git submodules
+      run: git submodule update
+    - name: Initialize datafusion git submodules
+      run: cd arrow-datafusion && git submodule init
+    - name: Fetch datafusion git submodules
+      run: cd arrow-datafusion && git submodule update
     - name: Format check
       run: cargo fmt --all -- --check
     - name: Generate code coverage
-      run: cargo llvm-cov --all-features --workspace --codecov --output-path lcov.info
+      run: cd scheduler && cargo llvm-cov --codecov --output-path lcov.info
     - name: Archive code coverage results
       uses: actions/upload-artifact@v4
       with:
         name: code-coverage-report
-        path: lcov.info
+        path: scheduler/lcov.info
         retention-days: 3
     - name: Upload to codecov
       uses: codecov/codecov-action@v3
       with:
         token: bfa5f7b0-adce-4bd0-bc16-864061dbd2c9
-        files: lcov.info
+        files: scheduler/lcov.info
         name: codecov-umbrella # optional
         fail_ci_if_error: true
         verbose: true

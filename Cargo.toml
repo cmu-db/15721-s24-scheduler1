@@ -1,31 +1,125 @@
-[package]
-name = "cronos"
-version = "0.1.0"
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+[workspace]
+exclude = ["datafusion-cli"]
+members = [
+    "arrow-datafusion/datafusion/common",
+    "arrow-datafusion/datafusion/common-runtime",
+    "arrow-datafusion/datafusion/core",
+    "arrow-datafusion/datafusion/expr",
+    "arrow-datafusion/datafusion/execution",
+    "arrow-datafusion/datafusion/functions",
+    "arrow-datafusion/datafusion/functions-array",
+    "arrow-datafusion/datafusion/optimizer",
+    "arrow-datafusion/datafusion/physical-expr",
+    "arrow-datafusion/datafusion/physical-plan",
+    "arrow-datafusion/datafusion/proto",
+    "arrow-datafusion/datafusion/proto/gen",
+    "arrow-datafusion/datafusion/sql",
+    "arrow-datafusion/datafusion/sqllogictest",
+    "arrow-datafusion/datafusion/substrait",
+    "arrow-datafusion/datafusion/wasmtest",
+    "arrow-datafusion/datafusion-examples",
+    "arrow-datafusion/docs",
+    "arrow-datafusion/test-utils",
+    "arrow-datafusion/benchmarks",
+    "scheduler",
+]
+resolver = "2"
+
+[workspace.package]
+authors = ["Apache Arrow <dev@arrow.apache.org>"]
 edition = "2021"
+homepage = "https://github.com/apache/arrow-datafusion"
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/apache/arrow-datafusion"
+rust-version = "1.72"
+version = "36.0.0"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace.dependencies]
+# We turn off default-features for some dependencies here so the workspaces which inherit them can
+# selectively turn them on if needed, since we can override default-features = true (from false)
+# for the inherited dependency but cannot do the reverse (override from true to false).
+#
+# See for more detaiils: https://github.com/rust-lang/cargo/issues/11329
+arrow = { version = "51.0.0", features = ["prettyprint"] }
+arrow-array = { version = "51.0.0", default-features = false, features = ["chrono-tz"] }
+arrow-buffer = { version = "51.0.0", default-features = false }
+arrow-flight = { version = "51.0.0", features = ["flight-sql-experimental"] }
+arrow-ipc = { version = "51.0.0", default-features = false, features = ["lz4"] }
+arrow-ord = { version = "51.0.0", default-features = false }
+arrow-schema = { version = "51.0.0", default-features = false }
+arrow-string = { version = "51.0.0", default-features = false }
+async-trait = "0.1.73"
+bigdecimal = "=0.4.1"
+bytes = "1.4"
+chrono = { version = "0.4.34", default-features = false }
+ctor = "0.2.0"
+dashmap = "5.4.0"
+datafusion = { path = "arrow-datafusion/datafusion/core", version = "36.0.0", default-features = false }
+datafusion-common = { path = "arrow-datafusion/datafusion/common", version = "36.0.0", default-features = false }
+datafusion-common-runtime = { path = "arrow-datafusion/datafusion/common-runtime", version = "36.0.0" }
+datafusion-execution = { path = "arrow-datafusion/datafusion/execution", version = "36.0.0" }
+datafusion-expr = { path = "arrow-datafusion/datafusion/expr", version = "36.0.0" }
+datafusion-functions = { path = "arrow-datafusion/datafusion/functions", version = "36.0.0" }
+datafusion-functions-array = { path = "arrow-datafusion/datafusion/functions-array", version = "36.0.0" }
+datafusion-optimizer = { path = "arrow-datafusion/datafusion/optimizer", version = "36.0.0", default-features = false }
+datafusion-physical-expr = { path = "arrow-datafusion/datafusion/physical-expr", version = "36.0.0", default-features = false }
+datafusion-physical-plan = { path = "arrow-datafusion/datafusion/physical-plan", version = "36.0.0" }
+datafusion-proto = { path = "arrow-datafusion/datafusion/proto", version = "36.0.0" }
+datafusion-sql = { path = "arrow-datafusion/datafusion/sql", version = "36.0.0" }
+datafusion-sqllogictest = { path = "arrow-datafusion/datafusion/sqllogictest", version = "36.0.0" }
+datafusion-substrait = { path = "arrow-datafusion/datafusion/substrait", version = "36.0.0" }
+doc-comment = "0.3"
+env_logger = "0.11"
+futures = "0.3"
+half = { version = "2.2.1", default-features = false }
+indexmap = "2.0.0"
+itertools = "0.12"
+log = "^0.4"
+num_cpus = "1.13.0"
+object_store = { version = "0.9.1", default-features = false }
+parking_lot = "0.12"
+parquet = { version = "51.0.0", default-features = false, features = ["arrow", "async", "object_store"] }
+rand = "0.8"
+rstest = "0.18.0"
+serde_json = "1"
+sqlparser = { version = "0.44.0", features = ["visitor"] }
+tempfile = "3"
+thiserror = "1.0.44"
+tokio = { version = "1.36", features = ["macros", "rt", "sync"] }
+url = "2.2"
 
-[lib]
-name = "lib"
-path = "src/lib.rs"
+[profile.release]
+codegen-units = 1
+lto = true
 
-[[bin]]
-name = "scheduler-api-server"
-path = "src/proto_server.rs"
-
-[dependencies]
-datafusion = "35.0.0"
-datafusion-common = "35.0.0"
-datafusion-expr = "35.0.0"
-datafusion-proto = "35.0.0"
-tonic = "0.11"
-lazy_static = "1.4.0"
-prost = "0.12.3"
-prost-types = "0.12.3"
-tokio = { version = "1.36", features = ["macros", "rt-multi-thread"] }
-async-recursion = "1.0.5"
-more-asserts = "0.3.1"
-futures = "0.3.30"
-
-[build-dependencies]
-tonic-build = "0.11"
+# the release profile takes a long time to build so we can use this profile during development to save time
+# cargo build --profile release-nonlto
+[profile.release-nonlto]
+codegen-units = 16
+debug = false
+debug-assertions = false
+incremental = false
+inherits = "release"
+lto = false
+opt-level = 3
+overflow-checks = false
+panic = 'unwind'
+rpath = false
