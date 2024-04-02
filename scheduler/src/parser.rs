@@ -592,7 +592,7 @@ mod tests {
     #[tokio::test]
     async fn test_left_deep_join() {
         let plan = build_plan_with_hash_join().await.unwrap();
-        validate_hash_join_plan(&plan);
+        validate_hash_join_plan(&plan).await;
 
         let fragments = parse_into_fragments_wrapper(plan, 0).await;
         print!("{:?}", fragments);
