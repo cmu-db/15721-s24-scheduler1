@@ -3,7 +3,7 @@ use datafusion::datasource::{empty::EmptyTable, DefaultTableSource};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::LogicalPlanBuilder;
 use datafusion::physical_plan::joins::{
-    HashBuildExec, HashJoinExec, HashProbeExec, NestedLoopJoinExec,
+    HashBuildExec, HashJoinExec, HashProbeExec,
 };
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{DefaultPhysicalPlanner, PhysicalPlanner};
@@ -275,21 +275,21 @@ async fn create_dummy_scans(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn Exe
 mod tests {
     use crate::parser::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-    use datafusion::execution::context::{SessionConfig, SessionContext};
+    use datafusion::execution::context::{SessionContext};
     use datafusion::execution::options::CsvReadOptions;
-    use datafusion::execution::TaskContext;
+    
     use datafusion::logical_expr::JoinType;
-    use datafusion::physical_plan::joins::utils::JoinOn;
-    use datafusion::physical_plan::joins::PartitionMode;
-    use datafusion::physical_plan::memory::MemoryExec;
+    
+    
+    
     use datafusion::physical_plan::sorts::sort::SortExec;
     use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
-    use datafusion::physical_plan::test::build_table_i32;
+    
     use datafusion::physical_plan::{
         coalesce_batches::CoalesceBatchesExec, empty::EmptyExec, filter::FilterExec,
         joins::NestedLoopJoinExec,
     };
-    use datafusion::prelude::*;
+    
     use datafusion_expr::{col, lit, LogicalPlan};
     use more_asserts as ma;
 
