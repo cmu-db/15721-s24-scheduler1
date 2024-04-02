@@ -2,9 +2,7 @@ use async_recursion::async_recursion;
 use datafusion::datasource::{empty::EmptyTable, DefaultTableSource};
 use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::LogicalPlanBuilder;
-use datafusion::physical_plan::joins::{
-    HashBuildExec, HashJoinExec, HashProbeExec,
-};
+use datafusion::physical_plan::joins::{HashBuildExec, HashJoinExec, HashProbeExec};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_planner::{DefaultPhysicalPlanner, PhysicalPlanner};
 use datafusion_common::Result;
@@ -171,8 +169,15 @@ pub async fn parse_into_fragments(
         };
         output.insert(build_fragment_id, build_fragment);
 
-        let parsed_build_side =
-            parse_into_fragments(build_side, build_fragment_id, output, query_id, Vec::new(), priority).await;
+        let parsed_build_side = parse_into_fragments(
+            build_side,
+            build_fragment_id,
+            output,
+            query_id,
+            Vec::new(),
+            priority,
+        )
+        .await;
 
         let build_side_new = HashBuildExec::try_new(
             parsed_build_side.clone(),
@@ -193,8 +198,15 @@ pub async fn parse_into_fragments(
 
         let probe_side = node.right.clone();
         let probe_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let parsed_probe_side =
-            parse_into_fragments(probe_side, probe_fragment_id, output, query_id, Vec::new(), priority).await;
+        let parsed_probe_side = parse_into_fragments(
+            probe_side,
+            probe_fragment_id,
+            output,
+            query_id,
+            Vec::new(),
+            priority,
+        )
+        .await;
         let new_root = HashProbeExec::try_new(
             parsed_build_side,
             parsed_probe_side,
@@ -275,21 +287,19 @@ async fn create_dummy_scans(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn Exe
 mod tests {
     use crate::parser::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-    use datafusion::execution::context::{SessionContext};
+    use datafusion::execution::context::SessionContext;
     use datafusion::execution::options::CsvReadOptions;
-    
+
     use datafusion::logical_expr::JoinType;
-    
-    
-    
+
     use datafusion::physical_plan::sorts::sort::SortExec;
     use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
-    
+
     use datafusion::physical_plan::{
         coalesce_batches::CoalesceBatchesExec, empty::EmptyExec, filter::FilterExec,
         joins::NestedLoopJoinExec,
     };
-    
+
     use datafusion_expr::{col, lit, LogicalPlan};
     use more_asserts as ma;
 
