@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 static FRAGMENT_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
 type QueryId = u64;
@@ -84,9 +83,9 @@ async fn populate_fragment_cost(fragment: &mut PhysicalPlanFragment) {
 // Wrapper function for parsing into fragments
 pub async fn parse_into_fragments_wrapper(
     root: Arc<dyn ExecutionPlan>,
+    query_id: u64,
     priority: i64,
 ) -> HashMap<QueryFragmentId, PhysicalPlanFragment> {
-    let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
     let fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
 
     let mut output = HashMap::<QueryFragmentId, PhysicalPlanFragment>::new();
@@ -207,6 +206,7 @@ pub async fn parse_into_fragments(
             priority,
         )
         .await;
+
         let new_root = HashProbeExec::try_new(
             parsed_build_side,
             parsed_probe_side,
@@ -370,7 +370,7 @@ mod tests {
         validate_toy_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragments = parse_into_fragments_wrapper(physical_plan, 0).await;
+        let fragments = parse_into_fragments_wrapper(physical_plan, 0, 0).await;
 
         assert_eq!(fragments.len(), 1);
         let plan_fragment = fragments.iter().next().unwrap().1;
@@ -442,7 +442,7 @@ mod tests {
         validate_basic_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragments = parse_into_fragments_wrapper(physical_plan, 0).await;
+        let fragments = parse_into_fragments_wrapper(physical_plan, 0, 0).await;
 
         assert_eq!(fragments.len(), 3);
 
@@ -560,7 +560,7 @@ mod tests {
         let plan = build_plan_with_hash_join().await.unwrap();
         validate_hash_join_plan(&plan).await;
 
-        let fragments = parse_into_fragments_wrapper(plan, 0).await;
+        let fragments = parse_into_fragments_wrapper(plan, 0, 0).await;
         print!("{:?}", fragments);
 
         let mut found_hash_build = false;

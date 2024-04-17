@@ -32,7 +32,7 @@ mod tests {
         let logical_plan = ctx.state().create_logical_plan(sql).await?;
         let physical_plan = ctx.state().create_physical_plan(&logical_plan).await?;
 
-        let mut fragments = parser::parse_into_fragments_wrapper(physical_plan, 0).await;
+        let mut fragments = parser::parse_into_fragments_wrapper(physical_plan, 0, 0).await;
         assert_eq!(fragments.len(), 3);
         let mut keys: Vec<u64> = vec![];
         for key in fragments.keys() {

@@ -13,6 +13,10 @@ path = "src/lib.rs"
 name = "scheduler-api-server"
 path = "src/proto_server.rs"
 
+[[bin]]
+name = "mock-executor"
+path = "src/mock_executor.rs"
+
 [dependencies]
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
