@@ -7,10 +7,10 @@ use datafusion::execution::context::SessionContext;
 use datafusion_proto::physical_plan::{AsExecutionPlan, DefaultPhysicalExtensionCodec};
 use datafusion_proto::protobuf;
 
-use crate::scheduler::SCHEDULER_INSTANCE;
-use crate::scheduler_interface::scheduler_service_server::SchedulerService;
-use crate::scheduler_interface::scheduler_service_server::SchedulerServiceServer;
-use crate::scheduler_interface::*;
+use lib::scheduler::SCHEDULER_INSTANCE;
+use lib::scheduler_interface::scheduler_service_server::SchedulerService;
+use lib::scheduler_interface::scheduler_service_server::SchedulerServiceServer;
+use lib::scheduler_interface::*;
 
 #[derive(Debug, Default)]
 pub struct MyScheduler {}
@@ -72,7 +72,7 @@ impl SchedulerService for MyScheduler {
         }
 
         // let scheduler = SCHEDULER_INSTANCE.lock().await;
-        let query_id = crate::queue::schedule_query(physical_plan, metadata.unwrap(), true).await;
+        let query_id = lib::queue::schedule_query(physical_plan, metadata.unwrap(), true).await;
 
         let reply = ScheduleQueryRet { query_id };
         Ok(Response::new(reply))

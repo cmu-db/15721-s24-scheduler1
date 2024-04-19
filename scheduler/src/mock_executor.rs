@@ -1,17 +1,17 @@
-use crate::executor_interface::executor_service_server::{ExecutorService, ExecutorServiceServer};
-use crate::executor_interface::{ExecuteQueryArgs, ExecuteQueryRet};
-use crate::scheduler_interface::scheduler_service_client::SchedulerServiceClient;
 use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion_proto::bytes::physical_plan_from_bytes;
 use datafusion_proto::protobuf::FileScanExecConf;
+use lib::executor_interface::executor_service_server::{ExecutorService, ExecutorServiceServer};
+use lib::executor_interface::{ExecuteQueryArgs, ExecuteQueryRet};
+use lib::scheduler_interface::scheduler_service_client::SchedulerServiceClient;
 
-use crate::scheduler_interface::GetQueryRet;
+use lib::scheduler_interface::{GetQueryArgs, GetQueryRet, QueryExecutionDoneArgs};
 use tokio::runtime::Handle;
 use tonic::{transport::Server, Code, Request, Response, Status};
 
-use crate::integration::{local_file_config, scan_from_parquet, spill_records_to_disk};
 use core::time;
 use datafusion::prelude::*;
+use lib::integration::{local_file_config, scan_from_parquet, spill_records_to_disk};
 use prost::Message;
 use std::env;
 use std::thread::{self, sleep};
@@ -76,7 +76,7 @@ async fn initialize(port: i32) {
     // println!("Registered with the scheduler at http://[::1]:{scheduler_service_port}");
 
     loop {
-        let get_request = tonic::Request::new(crate::scheduler_interface::GetQueryArgs {});
+        let get_request = tonic::Request::new(GetQueryArgs {});
         match client.get_query(get_request).await {
             Ok(response) => {
                 let response = response.into_inner();
@@ -84,12 +84,11 @@ async fn initialize(port: i32) {
                 let interm_file = integration_process(response.clone(), &ctx).await;
                 let interm_proto = FileScanExecConf::try_from(&interm_file).unwrap();
 
-                let finished_request =
-                    tonic::Request::new(crate::scheduler_interface::QueryExecutionDoneArgs {
-                        fragment_id: response.fragment_id,
-                        status: 0,
-                        file_scan_config: interm_proto.encode_to_vec(),
-                    });
+                let finished_request = tonic::Request::new(QueryExecutionDoneArgs {
+                    fragment_id: response.fragment_id,
+                    status: 0,
+                    file_scan_config: interm_proto.encode_to_vec(),
+                });
 
                 match client.query_execution_done(finished_request).await {
                     Err(e) => println!("Finished reply unsuccessful: {:?}", e),
