@@ -11,3 +11,4 @@ pub mod executor_interface {
 }
 
 mod mock_executor;
+mod proto_server;

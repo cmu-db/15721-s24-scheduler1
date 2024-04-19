@@ -40,7 +40,7 @@ async fn integration_process(
 ) -> FileScanConfig {
     let query_id = get_query_response.query_id;
     let fragment_id = get_query_response.fragment_id;
-    let process_plan = physical_plan_from_bytes(&get_query_response.physical_plan, &ctx).unwrap();
+    let process_plan = physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
     let output_schema = process_plan.schema();
     let intermediate_output = format!("query {query_id} fragment {fragment_id}.parquet");
 

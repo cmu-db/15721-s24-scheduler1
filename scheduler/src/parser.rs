@@ -107,7 +107,7 @@ pub async fn parse_into_fragments_wrapper(
     let new_root = if pipelined {
         parse_into_fragments(root, fragment_id, &mut output, query_id, path, priority).await
     } else {
-        parse_into_fragments_naive(root, fragment_id, &mut output, query_id, path, priority, pipelined).await
+        parse_into_fragments_naive(root, fragment_id, &mut output, query_id, path, priority).await
     };
     output.get_mut(&fragment_id).unwrap().root = Some(new_root);
     populate_fragment_cost(output.get_mut(&fragment_id).unwrap()).await;
@@ -273,7 +273,6 @@ pub async fn parse_into_fragments_naive(
     query_id: u64,
     mut path: Vec<u32>,
     priority: i64,
-    pipelined: bool,
 ) -> Arc<dyn ExecutionPlan> {
     let children = root.children();
 
@@ -292,7 +291,6 @@ pub async fn parse_into_fragments_naive(
             query_id,
             path,
             priority,
-            pipelined,
         )
         .await;
         return root.with_new_children(vec![new_child]).unwrap();
@@ -315,9 +313,15 @@ pub async fn parse_into_fragments_naive(
         };
         output.insert(child_fragment_id, child_query_fragment);
 
-        let new_child =
-            parse_into_fragments_naive(child, child_fragment_id, output, query_id, vec![], priority, pipelined)
-                .await;
+        let new_child = parse_into_fragments_naive(
+            child,
+            child_fragment_id,
+            output,
+            query_id,
+            vec![],
+            priority,
+        )
+        .await;
 
         let dummy_scan_node = create_dummy_scans(&new_child).await.unwrap();
         new_children.push(dummy_scan_node);

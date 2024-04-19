@@ -31,7 +31,7 @@ pub async fn schedule_query(
     let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
     let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, pipelined).await;
     add_fragments_to_scheduler(fragments).await;
-    return 0;
+    query_id.try_into().unwrap()
 }
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
@@ -39,12 +39,18 @@ pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, Physic
     let mut scheduler_instance = SCHEDULER_INSTANCE.lock().await;
     for (&id, fragment) in map.iter_mut() {
         if fragment.child_fragments.is_empty() {
-            println!("Pushing qid {} fid {} into pending_fragments", fragment.query_id, fragment.fragment_id);
+            println!(
+                "Pushing qid {} fid {} into pending_fragments",
+                fragment.query_id, fragment.fragment_id
+            );
             scheduler_instance.pending_fragments.push(id);
             fragment.enqueued_time = Some(SystemTime::now());
         }
     }
-    println!("pending_fragments length {}", scheduler_instance.pending_fragments.len());
+    println!(
+        "pending_fragments length {}",
+        scheduler_instance.pending_fragments.len()
+    );
     scheduler_instance.all_fragments.extend(map);
 }
 
@@ -72,7 +78,10 @@ pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
 
     let mut ref_id: Option<QueryFragmentId> = None;
     let mut ref_priority: i128 = 0;
-    println!("getting fragment from a pending_fragment length of {}", scheduler_instance.pending_fragments.len());
+    println!(
+        "getting fragment from a pending_fragment length of {}",
+        scheduler_instance.pending_fragments.len()
+    );
     for fragment_id in &scheduler_instance.pending_fragments {
         let frag = scheduler_instance.all_fragments.get(fragment_id).unwrap();
         println!("Considering qid {} fid {}", frag.query_id, frag.fragment_id);
