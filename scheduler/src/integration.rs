@@ -44,7 +44,9 @@ pub async fn spill_records_to_disk(
     let mut writer = arrow::ArrowWriter::try_new(file_pq, schema.clone(), Some(props)).unwrap();
 
     // write to disk
+    let mut num_rows = 0;
     while let Some(rec_batch) = rb_stream.try_next().await.unwrap() {
+        num_rows += rec_batch.num_rows();
         writer.write(&rec_batch).expect("Writing batch");
         result.push(rec_batch);
     }
@@ -52,7 +54,8 @@ pub async fn spill_records_to_disk(
     // writer must be closed to write footer
     writer.close()?;
     if print {
-        pretty::print_batches(&result).unwrap();
+        // pretty::print_batches(&result).unwrap();
+        println!("{} has {} records", filename, num_rows);
     }
     Ok(())
 }
@@ -94,7 +97,7 @@ pub async fn process_sql_request(
                         ORDER by a.order_id",
         item_id
     );
-    println!("{}", sql);
+    // println!("{}", sql);
     let logical_plan = ctx.state().create_logical_plan(sql.as_str()).await?;
     let physical_plan = ctx.state().create_physical_plan(&logical_plan).await?;
 
@@ -124,7 +127,7 @@ pub async fn process_physical_fragment(
         &intermediate_output,
         output_stream,
         output_schema.clone(),
-        fragment_id == 0,
+        fragment.parent_fragments.is_empty(),
     )
     .await
     .unwrap();
@@ -150,10 +153,8 @@ pub async fn spin_up(
             process_physical_fragment(fragment, &ctx, &abs_path_str, id).await;
         } else {
             if std::time::SystemTime::now().duration_since(born).unwrap() > live_for {
-                println!("id:{id} exits");
                 break;
             }
-            println!("id:{id} sleeps");
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
     }
@@ -340,7 +341,7 @@ mod tests {
         .await?;
 
         // create plans to run a SQL query
-        for i in 0..10 {
+        for i in 1..11 {
             process_sql_request(&ctx, i).await?;
         }
 
