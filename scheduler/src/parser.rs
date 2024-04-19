@@ -85,6 +85,7 @@ pub async fn parse_into_fragments_wrapper(
     root: Arc<dyn ExecutionPlan>,
     query_id: u64,
     priority: i64,
+    pipelined: bool,
 ) -> HashMap<QueryFragmentId, PhysicalPlanFragment> {
     let fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
 
@@ -103,8 +104,11 @@ pub async fn parse_into_fragments_wrapper(
     };
     let path = Vec::<u32>::new();
     output.insert(root_fragment.fragment_id, root_fragment);
-    let new_root =
-        parse_into_fragments(root, fragment_id, &mut output, query_id, path, priority).await;
+    let new_root = if pipelined {
+        parse_into_fragments(root, fragment_id, &mut output, query_id, path, priority).await
+    } else {
+        parse_into_fragments_naive(root, fragment_id, &mut output, query_id, path, priority, pipelined).await
+    };
     output.get_mut(&fragment_id).unwrap().root = Some(new_root);
     populate_fragment_cost(output.get_mut(&fragment_id).unwrap()).await;
 
@@ -261,6 +265,82 @@ pub async fn parse_into_fragments(
     new_root.unwrap()
 }
 
+#[async_recursion]
+pub async fn parse_into_fragments_naive(
+    root: Arc<dyn ExecutionPlan>,
+    fragment_id: QueryFragmentId,
+    output: &mut HashMap<QueryFragmentId, PhysicalPlanFragment>,
+    query_id: u64,
+    mut path: Vec<u32>,
+    priority: i64,
+    pipelined: bool,
+) -> Arc<dyn ExecutionPlan> {
+    let children = root.children();
+
+    // Trivial case of no children
+    if children.is_empty() {
+        return root;
+    }
+
+    // Single child just go down
+    if children.len() == 1 {
+        path.push(0);
+        let new_child = parse_into_fragments_naive(
+            children[0].clone(),
+            fragment_id,
+            output,
+            query_id,
+            path,
+            priority,
+            pipelined,
+        )
+        .await;
+        return root.with_new_children(vec![new_child]).unwrap();
+    }
+
+    let mut new_children = Vec::<Arc<dyn ExecutionPlan>>::new();
+
+    for (child_num, child) in (0_u32..).zip(children.into_iter()) {
+        let child_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+        let child_query_fragment = PhysicalPlanFragment {
+            query_id,
+            fragment_id: child_fragment_id,
+            root: None,
+            parent_path_from_root: vec![],
+            child_fragments: vec![],
+            parent_fragments: vec![fragment_id],
+            query_priority: priority,
+            enqueued_time: None,
+            fragment_cost: None,
+        };
+        output.insert(child_fragment_id, child_query_fragment);
+
+        let new_child =
+            parse_into_fragments_naive(child, child_fragment_id, output, query_id, vec![], priority, pipelined)
+                .await;
+
+        let dummy_scan_node = create_dummy_scans(&new_child).await.unwrap();
+        new_children.push(dummy_scan_node);
+
+        // Get a reference to the newly created child fragment
+        let child_fragment_ref = output.get_mut(&child_fragment_id).unwrap();
+        let mut new_path = path.clone();
+        new_path.push(child_num);
+        child_fragment_ref.parent_path_from_root.push(new_path);
+        child_fragment_ref.root = Some(new_child);
+        populate_fragment_cost(output.get_mut(&child_fragment_id).unwrap()).await;
+
+        output
+            .get_mut(&fragment_id)
+            .unwrap()
+            .child_fragments
+            .push(child_fragment_id);
+    }
+
+    let new_root = root.with_new_children(new_children);
+    new_root.unwrap()
+}
+
 // Dummy Scan nodes will created using [`plan`], attached to its parents.
 // Update these dummy nodes as results are produced by the execution team.
 async fn create_dummy_scans(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
@@ -370,7 +450,7 @@ mod tests {
         validate_toy_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragments = parse_into_fragments_wrapper(physical_plan, 0, 0).await;
+        let fragments = parse_into_fragments_wrapper(physical_plan, 0, 0, true).await;
 
         assert_eq!(fragments.len(), 1);
         let plan_fragment = fragments.iter().next().unwrap().1;
@@ -442,7 +522,7 @@ mod tests {
         validate_basic_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragments = parse_into_fragments_wrapper(physical_plan, 0, 0).await;
+        let fragments = parse_into_fragments_wrapper(physical_plan, 0, 0, true).await;
 
         assert_eq!(fragments.len(), 3);
 
@@ -560,7 +640,7 @@ mod tests {
         let plan = build_plan_with_hash_join().await.unwrap();
         validate_hash_join_plan(&plan).await;
 
-        let fragments = parse_into_fragments_wrapper(plan, 0, 0).await;
+        let fragments = parse_into_fragments_wrapper(plan, 0, 0, true).await;
         print!("{:?}", fragments);
 
         let mut found_hash_build = false;

@@ -8,14 +8,14 @@ use lazy_static::lazy_static;
 use tokio::sync::Mutex;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 struct ExecutorHandle {
-    port: i32
+    port: i32,
 }
 
 #[derive(Debug)]
@@ -45,16 +45,16 @@ pub enum PipelineBreakers {
 pub struct IntermediateNode {}
 
 impl Scheduler {
-    pub async fn schedule_query(
-        &self,
-        physical_plan: Arc<dyn ExecutionPlan>,
-        _query_info: QueryInfo,
-    ) -> i32 {
-        let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1).await;
-        add_fragments_to_scheduler(fragments);
-        return 0;
-    }
+    // pub async fn schedule_query(
+    //     &self,
+    //     physical_plan: Arc<dyn ExecutionPlan>,
+    //     _query_info: QueryInfo,
+    // ) -> i32 {
+    //     let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+    //     let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, false).await;
+    //     add_fragments_to_scheduler(fragments);
+    //     return 0;
+    // }
 
     pub fn query_job_status(&self, _query_id: i32) -> QueryStatus {
         unimplemented!()

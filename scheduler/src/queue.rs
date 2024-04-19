@@ -1,19 +1,37 @@
 use crate::{
-    parser::{PhysicalPlanFragment, QueryFragmentId},
+    parser::{parse_into_fragments_wrapper, PhysicalPlanFragment, QueryFragmentId},
     scheduler::SCHEDULER_INSTANCE,
 };
+use datafusion::config::TableParquetOptions;
 use datafusion::{
-    datasource::physical_plan::{ArrowExec, FileScanConfig},
+    datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
     physical_plan::joins::HashBuildExec,
     physical_plan::joins::HashBuildResult,
 };
 
+use crate::scheduler_interface::QueryInfo;
 use datafusion::physical_plan::ExecutionPlan;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc, time::SystemTime};
+
+static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
 pub enum QueryResult {
     ArrowExec(FileScanConfig),
     HashBuildExec(HashBuildResult),
+    ParquetExec(FileScanConfig),
+}
+
+/// Schedule an execution plan
+pub async fn schedule_query(
+    physical_plan: Arc<dyn ExecutionPlan>,
+    _query_info: QueryInfo,
+    pipelined: bool,
+) -> i32 {
+    let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+    let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, pipelined).await;
+    add_fragments_to_scheduler(fragments).await;
+    return 0;
 }
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
@@ -21,10 +39,12 @@ pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, Physic
     let mut scheduler_instance = SCHEDULER_INSTANCE.lock().await;
     for (&id, fragment) in map.iter_mut() {
         if fragment.child_fragments.is_empty() {
+            println!("Pushing qid {} fid {} into pending_fragments", fragment.query_id, fragment.fragment_id);
             scheduler_instance.pending_fragments.push(id);
             fragment.enqueued_time = Some(SystemTime::now());
         }
     }
+    println!("pending_fragments length {}", scheduler_instance.pending_fragments.len());
     scheduler_instance.all_fragments.extend(map);
 }
 
@@ -52,8 +72,10 @@ pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
 
     let mut ref_id: Option<QueryFragmentId> = None;
     let mut ref_priority: i128 = 0;
+    println!("getting fragment from a pending_fragment length of {}", scheduler_instance.pending_fragments.len());
     for fragment_id in &scheduler_instance.pending_fragments {
         let frag = scheduler_instance.all_fragments.get(fragment_id).unwrap();
+        println!("Considering qid {} fid {}", frag.query_id, frag.fragment_id);
         let priority = get_priority_from_fragment(frag);
         if priority > ref_priority || ref_id.is_none() {
             ref_id = Some(*fragment_id);
@@ -83,6 +105,7 @@ pub fn update_plan_parent(
     if path.is_empty() {
         match query_result {
             QueryResult::ArrowExec(file_config) => return create_arrow_scan_node(file_config),
+            QueryResult::ParquetExec(file_config) => return create_parquet_scan_node(file_config),
             QueryResult::HashBuildExec(result) => return HashBuildExec::get(result),
         }
     }
@@ -123,8 +146,11 @@ pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result
         let parent_fragment = scheduler_instance.all_fragments.get_mut(id).unwrap();
 
         let path = &parent_fragment_paths[i];
-        let new_root =
-            update_plan_parent(parent_fragment.root.clone().unwrap(), path, &fragment_result);
+        let new_root = update_plan_parent(
+            parent_fragment.root.clone().unwrap(),
+            path,
+            &fragment_result,
+        );
 
         parent_fragment.root = Some(new_root);
 
@@ -142,6 +168,15 @@ pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result
 
 fn create_arrow_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPlan> {
     Arc::new(ArrowExec::new(file_config.clone()))
+}
+
+fn create_parquet_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPlan> {
+    Arc::new(ParquetExec::new(
+        file_config.clone(),
+        None,
+        None,
+        TableParquetOptions::default(),
+    ))
 }
 
 #[cfg(test)]
@@ -322,7 +357,7 @@ mod tests {
         validate_basic_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragment_map = parse_into_fragments_wrapper(physical_plan, 0, 0).await;
+        let fragment_map = parse_into_fragments_wrapper(physical_plan, 0, 0, true).await;
 
         add_fragments_to_scheduler(fragment_map).await;
         let scheduler_instance = SCHEDULER_INSTANCE.lock().await;
@@ -355,7 +390,8 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
-        ).await;
+        )
+        .await;
 
         assert!(get_plan_from_queue().await.is_none());
         let scheduler_instance = SCHEDULER_INSTANCE.lock().await;
@@ -374,7 +410,8 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
-        ).await;
+        )
+        .await;
 
         let root_fragments = get_plan_from_queue().await.unwrap();
 

@@ -91,7 +91,10 @@ message GetQueryArgs {
 message GetQueryRet {
     int32 query_id = 1;
 
-    bytes physical_plan = 2;
+    int32 fragment_id = 2;
+
+    bytes physical_plan = 3;
+
 }
 
 // The scheduler interface.

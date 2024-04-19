@@ -1,6 +1,6 @@
 use tonic::{transport::Server, Code, Request, Response, Status};
 
-use datafusion_proto::bytes::{physical_plan_to_bytes, physical_plan_from_bytes};
+use datafusion_proto::bytes::{physical_plan_from_bytes, physical_plan_to_bytes};
 
 use datafusion::execution::context::SessionContext;
 
@@ -21,7 +21,6 @@ impl SchedulerService for MyScheduler {
         &self,
         request: Request<GetQueryArgs>,
     ) -> Result<Response<GetQueryRet>, Status> {
-
         let scheduler = SCHEDULER_INSTANCE.lock().await;
         let plan = scheduler.get_plan_from_queue().await;
 
@@ -29,13 +28,15 @@ impl SchedulerService for MyScheduler {
             Some(p) => {
                 let reply = GetQueryRet {
                     query_id: i32::try_from(p.query_id).unwrap(),
+                    fragment_id: i32::try_from(p.fragment_id).unwrap(),
                     physical_plan: physical_plan_to_bytes(p.root.unwrap()).unwrap().to_vec(),
                 };
                 Ok(Response::new(reply))
-            },
+            }
             None => {
                 let reply = GetQueryRet {
                     query_id: -1,
+                    fragment_id: -1,
                     physical_plan: vec![],
                 };
                 Ok(Response::new(reply))
@@ -107,8 +108,7 @@ impl SchedulerService for MyScheduler {
             let status = Status::new(Code::InvalidArgument, "Query status not specified");
             return Err(status);
         }
-        let scheduler = SCHEDULER_INSTANCE
-            .lock().await;
+        let scheduler = SCHEDULER_INSTANCE.lock().await;
 
         scheduler.query_execution_done(fragment_id, query_status.unwrap());
 
