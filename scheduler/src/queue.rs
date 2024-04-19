@@ -30,13 +30,17 @@ pub async fn schedule_query(
 ) -> i32 {
     let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
     let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, pipelined).await;
+    println!("{}:{} fragment count {}", file!(),line!(), fragments.len());
     add_fragments_to_scheduler(fragments).await;
+    println!("{}:{}", file!(),line!());
     query_id.try_into().unwrap()
 }
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
 pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, PhysicalPlanFragment>) {
+    println!("{}:{}", file!(),line!());
     let mut scheduler_instance = SCHEDULER_INSTANCE.lock().await;
+    println!("{}:{}", file!(),line!());
     for (&id, fragment) in map.iter_mut() {
         if fragment.child_fragments.is_empty() {
             // println!(

@@ -54,7 +54,7 @@ pub async fn spill_records_to_disk(
     // writer must be closed to write footer
     writer.close()?;
     if print {
-        // pretty::print_batches(&result).unwrap();
+        pretty::print_batches(&result).unwrap();
         println!("{} has {} records", filename, num_rows);
     }
     Ok(())

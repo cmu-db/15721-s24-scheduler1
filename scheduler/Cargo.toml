@@ -17,6 +17,10 @@ path = "src/proto_server.rs"
 name = "mock-executor"
 path = "src/mock_executor.rs"
 
+[[bin]]
+name = "cli"
+path = "src/cli.rs"
+
 [dependencies]
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
@@ -30,6 +34,9 @@ tokio = { version = "1.36", features = ["macros", "rt-multi-thread"] }
 async-recursion = "1.0.5"
 more-asserts = "0.3.1"
 futures = "0.3.30"
+anyhow = "1.0.82"
+clap = "4.5.4"
+bytes = "0.4.12"
 
 [build-dependencies]
 tonic-build = "0.11"

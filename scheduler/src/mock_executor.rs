@@ -13,7 +13,7 @@ use core::time;
 use datafusion::prelude::*;
 use lib::integration::{local_file_config, scan_from_parquet, spill_records_to_disk};
 use prost::Message;
-use std::env;
+use std::{env, path};
 use std::thread::{self, sleep};
 use std::time::Duration;
 
@@ -38,14 +38,17 @@ async fn integration_process(
     get_query_response: GetQueryRet,
     ctx: &SessionContext,
 ) -> FileScanConfig {
+    let wd = env::current_dir().unwrap();
+    let wd_str = wd.to_str().unwrap();
+
     let query_id = get_query_response.query_id;
     let fragment_id = get_query_response.fragment_id;
     let process_plan = physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
     let output_schema = process_plan.schema();
-    let intermediate_output = format!("query {query_id} fragment {fragment_id}.parquet");
-
     let context = ctx.state().task_ctx();
     let mut output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
+
+    let intermediate_output = format!("{wd_str}/scheduler/src/example_data/query_{query_id}_fragment_{fragment_id}.parquet");
 
     spill_records_to_disk(
         &intermediate_output,
@@ -59,7 +62,6 @@ async fn integration_process(
 }
 
 async fn initialize(port: i32) {
-    let ctx = SessionContext::new();
     let scheduler_service_port = env::var("SCHEDULER_PORT").unwrap_or_else(|error| {
         panic!("Scheduler port environment variable not set");
     });
@@ -74,12 +76,17 @@ async fn initialize(port: i32) {
     // let request = tonic::Request::new(crate::scheduler_interface::RegisterExecutorArgs { port });
     // let response = client.register_executor(request).await;
     // println!("Registered with the scheduler at http://[::1]:{scheduler_service_port}");
-
+    println!("connected");
+    let ctx = SessionContext::new();
     loop {
         let get_request = tonic::Request::new(GetQueryArgs {});
         match client.get_query(get_request).await {
             Ok(response) => {
                 let response = response.into_inner();
+                if response.query_id < 0 {
+                    sleep(time::Duration::from_millis(500));
+                    continue;
+                }
                 // request should be a enum later where one variant is break
                 let interm_file = integration_process(response.clone(), &ctx).await;
                 let interm_proto = FileScanExecConf::try_from(&interm_file).unwrap();
@@ -92,13 +99,16 @@ async fn initialize(port: i32) {
 
                 match client.query_execution_done(finished_request).await {
                     Err(e) => println!("Finished reply unsuccessful: {:?}", e),
-                    Ok(_finished_response) => (),
+                    Ok(_finished_response) => println!("reply for finishing query frag received"),
                 }
             }
 
             Err(e) => {
                 println!("Query get unsuccessful: {:?}", e);
-                sleep(time::Duration::from_millis(100));
+                if e.code() == Code::Unavailable {
+                    break;
+                }
+                sleep(time::Duration::from_millis(500));
             }
         };
     }
