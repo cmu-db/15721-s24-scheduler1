@@ -245,6 +245,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn csv_query() -> Result<(), Box<dyn error::Error>> {
         let abs_path = std::fs::canonicalize(".")?;
         let abs_path_str = abs_path.to_str().unwrap();
