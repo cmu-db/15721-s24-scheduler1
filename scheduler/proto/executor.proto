@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package executor_interface;
+
+message ExecuteQueryArgs {
+    // The query fragment identifier.
+    int32 fragment_id = 1;
+
+    // The physical plan for the query.
+    bytes physical_plan = 2;
+}
+
+message ExecuteQueryRet {
+}
+
+service ExecutorService {
+    rpc ExecuteQuery(ExecuteQueryArgs) returns (ExecuteQueryRet);
+}

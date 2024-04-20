@@ -1,21 +1,56 @@
 use crate::{
-    parser::{PhysicalPlanFragment, QueryFragmentId},
+    parser::{parse_into_fragments_wrapper, PhysicalPlanFragment, QueryFragmentId},
     scheduler::SCHEDULER_INSTANCE,
 };
-use datafusion::datasource::physical_plan::{ArrowExec, FileScanConfig};
+use datafusion::config::TableParquetOptions;
+use datafusion::{
+    datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
+    physical_plan::joins::HashBuildExec,
+    physical_plan::joins::HashBuildResult,
+};
 
+use crate::scheduler_interface::QueryInfo;
 use datafusion::physical_plan::ExecutionPlan;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc, time::SystemTime};
 
+static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
+
+pub enum QueryResult {
+    ArrowExec(FileScanConfig),
+    HashBuildExec(HashBuildResult),
+    ParquetExec(FileScanConfig),
+}
+
+/// Schedule an execution plan
+pub async fn schedule_query(
+    physical_plan: Arc<dyn ExecutionPlan>,
+    _query_info: QueryInfo,
+    pipelined: bool,
+) -> i32 {
+    let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+    let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, pipelined).await;
+    add_fragments_to_scheduler(fragments).await;
+    query_id.try_into().unwrap()
+}
+
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
-pub fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, PhysicalPlanFragment>) {
-    let mut scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, PhysicalPlanFragment>) {
+    let mut scheduler_instance = SCHEDULER_INSTANCE.lock().await;
     for (&id, fragment) in map.iter_mut() {
         if fragment.child_fragments.is_empty() {
+            // println!(
+            //     "Pushing qid {} fid {} into pending_fragments",
+            //     fragment.query_id, fragment.fragment_id
+            // );
             scheduler_instance.pending_fragments.push(id);
             fragment.enqueued_time = Some(SystemTime::now());
         }
     }
+    // println!(
+    //     "pending_fragments length {}",
+    //     scheduler_instance.pending_fragments.len()
+    // );
     scheduler_instance.all_fragments.extend(map);
 }
 
@@ -38,13 +73,17 @@ pub fn get_priority_from_fragment(fragment: &PhysicalPlanFragment) -> i128 {
 }
 
 /// Get the plan with the highest priorty from the queue
-pub fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
-    let mut scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
+    let mut scheduler_instance = SCHEDULER_INSTANCE.lock().await;
 
     let mut ref_id: Option<QueryFragmentId> = None;
     let mut ref_priority: i128 = 0;
+    // println!( "getting fragment from a pending_fragment length of {}",
+    //     scheduler_instance.pending_fragments.len()
+    // );
     for fragment_id in &scheduler_instance.pending_fragments {
         let frag = scheduler_instance.all_fragments.get(fragment_id).unwrap();
+        // println!("Considering qid {} fid {}", frag.query_id, frag.fragment_id);
         let priority = get_priority_from_fragment(frag);
         if priority > ref_priority || ref_id.is_none() {
             ref_id = Some(*fragment_id);
@@ -69,10 +108,14 @@ pub fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
 pub fn update_plan_parent(
     root: Arc<dyn ExecutionPlan>,
     path: &[u32],
-    file_config: &FileScanConfig,
+    query_result: &QueryResult,
 ) -> Arc<dyn ExecutionPlan> {
     if path.is_empty() {
-        return create_arrow_scan_node(&root, file_config);
+        match query_result {
+            QueryResult::ArrowExec(file_config) => return create_arrow_scan_node(file_config),
+            QueryResult::ParquetExec(file_config) => return create_parquet_scan_node(file_config),
+            QueryResult::HashBuildExec(result) => return HashBuildExec::get(result),
+        }
     }
 
     let children: Vec<Arc<dyn ExecutionPlan>> = root.children();
@@ -83,15 +126,15 @@ pub fn update_plan_parent(
         if i != path[0] {
             new_children.push(child);
         } else {
-            new_children.push(update_plan_parent(child, &path[1..], file_config));
+            new_children.push(update_plan_parent(child, &path[1..], query_result));
         }
         i += 1;
     }
     root.with_new_children(new_children).unwrap()
 }
 
-pub fn finish_fragment(child_fragment_id: QueryFragmentId, file_config: FileScanConfig) {
-    let mut scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result: QueryResult) {
+    let mut scheduler_instance = SCHEDULER_INSTANCE.lock().await;
     let parent_fragment_ids = scheduler_instance
         .all_fragments
         .get(&child_fragment_id)
@@ -111,8 +154,11 @@ pub fn finish_fragment(child_fragment_id: QueryFragmentId, file_config: FileScan
         let parent_fragment = scheduler_instance.all_fragments.get_mut(id).unwrap();
 
         let path = &parent_fragment_paths[i];
-        let new_root =
-            update_plan_parent(parent_fragment.root.clone().unwrap(), path, &file_config);
+        let new_root = update_plan_parent(
+            parent_fragment.root.clone().unwrap(),
+            path,
+            &fragment_result,
+        );
 
         parent_fragment.root = Some(new_root);
 
@@ -128,11 +174,17 @@ pub fn finish_fragment(child_fragment_id: QueryFragmentId, file_config: FileScan
     scheduler_instance.pending_fragments.extend(new_ids_to_push);
 }
 
-fn create_arrow_scan_node(
-    _plan: &Arc<dyn ExecutionPlan>,
-    file_config: &FileScanConfig,
-) -> Arc<dyn ExecutionPlan> {
+fn create_arrow_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPlan> {
     Arc::new(ArrowExec::new(file_config.clone()))
+}
+
+fn create_parquet_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPlan> {
+    Arc::new(ParquetExec::new(
+        file_config.clone(),
+        None,
+        None,
+        TableParquetOptions::default(),
+    ))
 }
 
 #[cfg(test)]
@@ -240,8 +292,8 @@ mod tests {
         };
         let mut map: HashMap<QueryFragmentId, PhysicalPlanFragment> = HashMap::new();
         map.insert(0, fragment);
-        add_fragments_to_scheduler(map);
-        let queued_fragment = get_plan_from_queue().unwrap();
+        add_fragments_to_scheduler(map).await;
+        let queued_fragment = get_plan_from_queue().await.unwrap();
         assert!(queued_fragment.root.is_some());
         ma::assert_ge!(queued_fragment.query_id, 0);
         ma::assert_ge!(queued_fragment.fragment_id, 0);
@@ -254,7 +306,7 @@ mod tests {
         assert!(queued_fragment.parent_path_from_root.is_empty());
         assert!(queued_fragment.enqueued_time.is_some());
 
-        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().await;
         assert_eq!(scheduler_instance.pending_fragments.len(), 0);
     }
 
@@ -313,30 +365,30 @@ mod tests {
         validate_basic_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragment_map = parse_into_fragments_wrapper(physical_plan, 0).await;
+        let fragment_map = parse_into_fragments_wrapper(physical_plan, 0, 0, true).await;
 
-        add_fragments_to_scheduler(fragment_map);
-        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        add_fragments_to_scheduler(fragment_map).await;
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().await;
         assert_eq!(scheduler_instance.pending_fragments.len(), 2);
         drop(scheduler_instance);
 
         let mut child_fragment_vec = Vec::<PhysicalPlanFragment>::new();
 
-        let mut queued_fragment = get_plan_from_queue().unwrap();
+        let mut queued_fragment = get_plan_from_queue().await.unwrap();
         assert!(queued_fragment.root.is_some());
         child_fragment_vec.push(queued_fragment);
-        queued_fragment = get_plan_from_queue().unwrap();
+        queued_fragment = get_plan_from_queue().await.unwrap();
         assert!(queued_fragment.root.is_some());
         child_fragment_vec.push(queued_fragment);
-        assert!(get_plan_from_queue().is_none());
+        assert!(get_plan_from_queue().await.is_none());
 
-        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().await;
         assert_eq!(scheduler_instance.pending_fragments.len(), 0);
         drop(scheduler_instance);
 
         finish_fragment(
             child_fragment_vec[0].fragment_id,
-            FileScanConfig {
+            QueryResult::ArrowExec(FileScanConfig {
                 object_store_url: ObjectStoreUrl::parse("https://example.net").unwrap(),
                 file_schema: SchemaRef::new(Schema::empty()),
                 file_groups: vec![],
@@ -345,17 +397,18 @@ mod tests {
                 limit: None,
                 table_partition_cols: vec![],
                 output_ordering: vec![],
-            },
-        );
+            }),
+        )
+        .await;
 
-        assert!(get_plan_from_queue().is_none());
-        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        assert!(get_plan_from_queue().await.is_none());
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().await;
         assert_eq!(scheduler_instance.pending_fragments.len(), 0);
         drop(scheduler_instance);
 
         finish_fragment(
             child_fragment_vec[1].fragment_id,
-            FileScanConfig {
+            QueryResult::ArrowExec(FileScanConfig {
                 object_store_url: ObjectStoreUrl::parse("https://example.net").unwrap(),
                 file_schema: SchemaRef::new(Schema::empty()),
                 file_groups: vec![],
@@ -364,13 +417,14 @@ mod tests {
                 limit: None,
                 table_partition_cols: vec![],
                 output_ordering: vec![],
-            },
-        );
+            }),
+        )
+        .await;
 
-        let root_fragments = get_plan_from_queue().unwrap();
+        let root_fragments = get_plan_from_queue().await.unwrap();
 
-        assert!(get_plan_from_queue().is_none());
-        let scheduler_instance = SCHEDULER_INSTANCE.lock().unwrap();
+        assert!(get_plan_from_queue().await.is_none());
+        let scheduler_instance = SCHEDULER_INSTANCE.lock().await;
         assert_eq!(scheduler_instance.pending_fragments.len(), 0);
         drop(scheduler_instance);
         let mut num_child = 0;

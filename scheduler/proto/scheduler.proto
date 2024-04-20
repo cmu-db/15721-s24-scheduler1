@@ -67,10 +67,33 @@ message QueryExecutionDoneArgs {
 
     // The status of query execution.
     QueryStatus status = 2;
+
+    bytes file_scan_config = 3;
 }
 
 // Information returned from the QueryExecutionDone RPC.
 message QueryExecutionDoneRet {
+
+}
+
+message RegisterExecutorArgs {
+    int32 port = 1;
+}
+
+message RegisterExecutorRet {
+
+}
+
+message GetQueryArgs {
+
+}
+
+message GetQueryRet {
+    int32 query_id = 1;
+
+    int32 fragment_id = 2;
+
+    bytes physical_plan = 3;
 
 }
 
@@ -81,6 +104,10 @@ service SchedulerService {
 
     // Used by the optimizer to query the status of a job.
     rpc QueryJobStatus(QueryJobStatusArgs) returns (QueryJobStatusRet);
+
+    rpc RegisterExecutor(RegisterExecutorArgs) returns (RegisterExecutorRet);
+
+    rpc GetQuery(GetQueryArgs) returns (GetQueryRet);
 
     // Used by the execution engine to notify the scheduler that the execution
     // of query fragment is complete.

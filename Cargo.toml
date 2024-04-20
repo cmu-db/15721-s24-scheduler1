@@ -16,7 +16,7 @@
 # under the License.
 
 [workspace]
-exclude = ["datafusion-cli"]
+# exclude = ["datafusion-cli"]
 members = [
     "arrow-datafusion/datafusion/common",
     "arrow-datafusion/datafusion/common-runtime",
@@ -39,6 +39,7 @@ members = [
     "arrow-datafusion/test-utils",
     "arrow-datafusion/benchmarks",
     "scheduler",
+    "arrow-datafusion/datafusion-cli",
 ]
 resolver = "2"
 

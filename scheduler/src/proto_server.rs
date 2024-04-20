@@ -1,6 +1,6 @@
 use tonic::{transport::Server, Code, Request, Response, Status};
 
-use datafusion_proto::bytes::physical_plan_from_bytes;
+use datafusion_proto::bytes::{physical_plan_from_bytes, physical_plan_to_bytes};
 
 use datafusion::execution::context::SessionContext;
 
@@ -17,6 +17,33 @@ pub struct MyScheduler {}
 
 #[tonic::async_trait]
 impl SchedulerService for MyScheduler {
+    async fn get_query(
+        &self,
+        request: Request<GetQueryArgs>,
+    ) -> Result<Response<GetQueryRet>, Status> {
+        let scheduler = SCHEDULER_INSTANCE.lock().await;
+        let plan = scheduler.get_plan_from_queue().await;
+
+        match plan {
+            Some(p) => {
+                let reply = GetQueryRet {
+                    query_id: i32::try_from(p.query_id).unwrap(),
+                    fragment_id: i32::try_from(p.fragment_id).unwrap(),
+                    physical_plan: physical_plan_to_bytes(p.root.unwrap()).unwrap().to_vec(),
+                };
+                Ok(Response::new(reply))
+            }
+            None => {
+                let reply = GetQueryRet {
+                    query_id: -1,
+                    fragment_id: -1,
+                    physical_plan: vec![],
+                };
+                Ok(Response::new(reply))
+            }
+        }
+    }
+
     async fn schedule_query(
         &self,
         request: Request<ScheduleQueryArgs>,
@@ -44,10 +71,8 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
 
-        let query_id = SCHEDULER_INSTANCE
-            .lock()
-            .unwrap()
-            .schedule_query(physical_plan, metadata.unwrap());
+        // let scheduler = SCHEDULER_INSTANCE.lock().await;
+        let query_id = lib::queue::schedule_query(physical_plan, metadata.unwrap(), true).await;
 
         let reply = ScheduleQueryRet { query_id };
         Ok(Response::new(reply))
@@ -60,10 +85,8 @@ impl SchedulerService for MyScheduler {
         let request_content = request.into_inner();
         let query_id = request_content.query_id;
 
-        let query_status = SCHEDULER_INSTANCE
-            .lock()
-            .unwrap()
-            .query_job_status(query_id);
+        let scheduler = SCHEDULER_INSTANCE.lock().await;
+        let query_status = scheduler.query_job_status(query_id);
 
         let reply = QueryJobStatusRet {
             query_status: query_status.into(),
@@ -83,12 +106,25 @@ impl SchedulerService for MyScheduler {
             let status = Status::new(Code::InvalidArgument, "Query status not specified");
             return Err(status);
         }
-        SCHEDULER_INSTANCE
-            .lock()
-            .unwrap()
-            .query_execution_done(fragment_id, query_status.unwrap());
+        let scheduler = SCHEDULER_INSTANCE.lock().await;
+
+        scheduler.query_execution_done(fragment_id, query_status.unwrap());
 
         let reply = QueryExecutionDoneRet {};
+        Ok(Response::new(reply))
+    }
+
+    async fn register_executor(
+        &self,
+        request: Request<RegisterExecutorArgs>,
+    ) -> Result<Response<RegisterExecutorRet>, Status> {
+        let request_content = request.into_inner();
+        let port = request_content.port;
+
+        let mut scheduler = SCHEDULER_INSTANCE.lock().await;
+        scheduler.register_executor(port);
+
+        let reply = RegisterExecutorRet {};
         Ok(Response::new(reply))
     }
 }
@@ -97,6 +133,8 @@ impl SchedulerService for MyScheduler {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse()?;
     let scheduler = MyScheduler::default();
+
+    println!("Scheduler server listening on {addr}");
 
     Server::builder()
         .add_service(SchedulerServiceServer::new(scheduler))
