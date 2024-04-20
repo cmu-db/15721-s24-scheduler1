@@ -54,7 +54,7 @@ async fn integration_process(
         &intermediate_output,
         output_stream,
         output_schema.clone(),
-        fragment_id == 0,
+        get_query_response.root,
     )
     .await
     .unwrap();

@@ -95,28 +95,12 @@ message GetQueryRet {
 
     bytes physical_plan = 3;
 
-}
+    bool root = 4;
 
-// Information required to schedule a query.
-message CliScheduleQueryArgs {
-    // A query string
-    string sql = 1;
-
-    // Metadata related to the query.
-    QueryInfo metadata = 2;
-}
-
-// Information returned from the ScheduleQuery RPC.
-message CliScheduleQueryRet {
-    // The identifier to refer to this query execution.
-    int32 query_id = 1;
 }
 
 // The scheduler interface.
 service SchedulerService {
-
-    // Used by the cli to schedule a new query.
-    rpc CliScheduleQuery(CliScheduleQueryArgs) returns (CliScheduleQueryRet);
 
     // Used by the optimizer to schedule a new query.
     rpc ScheduleQuery(ScheduleQueryArgs) returns (ScheduleQueryRet);

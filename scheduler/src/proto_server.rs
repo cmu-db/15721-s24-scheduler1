@@ -35,6 +35,7 @@ impl SchedulerService for MyScheduler {
                     query_id: i32::try_from(p.query_id).unwrap(),
                     fragment_id: i32::try_from(p.fragment_id).unwrap(),
                     physical_plan: physical_plan_to_bytes(p.root.unwrap()).unwrap().to_vec(),
+                    root: p.parent_fragments.is_empty(),
                 };
                 Ok(Response::new(reply))
             }
@@ -43,63 +44,11 @@ impl SchedulerService for MyScheduler {
                     query_id: -1,
                     fragment_id: -1,
                     physical_plan: vec![],
+                    root: false,
                 };
                 Ok(Response::new(reply))
             }
         }
-    }
-
-    async fn cli_schedule_query(
-        &self,
-        request: Request<CliScheduleQueryArgs>,
-    ) -> Result<Response<CliScheduleQueryRet>, Status> {
-        println!("CLI received");
-        let request_content = request.into_inner();
-        let sql = request_content.sql;
-
-        // Deserialize physical plan
-        let ctx = SessionContext::new();
-
-        let wd = std::env::current_dir().unwrap();
-        let wd_str = wd.to_str().unwrap();
-
-        ctx.register_csv(
-            "orders",
-            &format!("{}/scheduler/src/example_data/orders.csv", wd_str),
-            CsvReadOptions::new(),
-        )
-        .await.unwrap_or_default();
-        ctx.register_csv(
-            "prices",
-            &format!("{}/scheduler/src/example_data/prices.csv", wd_str),
-            CsvReadOptions::new(),
-        )
-        .await.unwrap_or_default();
-
-        let logical_plan = ctx.state().create_logical_plan(sql.as_str()).await.expect("query string to logical plan failed");
-        let physical_plan = ctx.state().create_physical_plan(&logical_plan).await.expect("logical to physical plan failed");
-        // let physical_plan = physical_plan_from_bytes(&physical_plan_bytes, &ctx).unwrap();
-
-        let metadata = request_content.metadata;
-
-        if metadata.is_none() {
-            let status = Status::new(Code::InvalidArgument, "Metadata not specified");
-            return Err(status);
-        }
-
-        let codec = DefaultPhysicalExtensionCodec {};
-        let physical_plan_proto =
-            protobuf::PhysicalPlanNode::try_from_physical_plan(physical_plan.clone(), &codec);
-
-        if physical_plan_proto.is_err() {
-            let status = Status::new(Code::InvalidArgument, "Error converting to proto");
-            return Err(status);
-        }
-
-        // let scheduler = SCHEDULER_INSTANCE.lock().await;
-        let query_id = lib::queue::schedule_query(physical_plan, metadata.unwrap(), false).await;
-        let reply = CliScheduleQueryRet { query_id };
-        Ok(Response::new(reply))
     }
 
     async fn schedule_query(
@@ -121,13 +70,13 @@ impl SchedulerService for MyScheduler {
         }
 
         let codec = DefaultPhysicalExtensionCodec {};
-        let physical_plan_proto =
-            protobuf::PhysicalPlanNode::try_from_physical_plan(physical_plan.clone(), &codec);
+        // let physical_plan_proto =
+        //     protobuf::PhysicalPlanNode::try_from_physical_plan(physical_plan.clone(), &codec);
 
-        if physical_plan_proto.is_err() {
-            let status = Status::new(Code::InvalidArgument, "Error converting to proto");
-            return Err(status);
-        }
+        // if physical_plan_proto.is_err() {
+        //     let status = Status::new(Code::InvalidArgument, "Error converting to proto");
+        //     return Err(status);
+        // }
 
         // let scheduler = SCHEDULER_INSTANCE.lock().await;
         let query_id = lib::queue::schedule_query(physical_plan, metadata.unwrap(), true).await;
