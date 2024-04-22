@@ -22,7 +22,7 @@ pub async fn spill_records_to_disk(
     _print: bool,
 ) -> Result<Option<String>, Box<dyn error::Error>> {
     let path_pq = Path::new(filename);
-    let file_pq = File::create(&path_pq)?;
+    let file_pq = File::create(path_pq)?;
     let mut result: Vec<RecordBatch> = vec![];
 
     // WriterProperties can be used to set Parquet file options
@@ -209,7 +209,7 @@ mod tests {
 
         let arrow_file = format!("{}/src/example_data/spill_test.arrow", abs_path_str);
         let path = Path::new(&arrow_file);
-        let file = File::create(&path)?;
+        let file = File::create(path)?;
         let mut ar_writer = ipc::writer::StreamWriter::try_new(file, &test_schema)?;
         while let Some(rec_batch) = ar.try_next().await? {
             ar_writer.write(&rec_batch)?;
@@ -218,7 +218,7 @@ mod tests {
 
         // read in left side for comparisons
         let mut ar_read = Vec::<RecordBatch>::new();
-        let left_file = File::open(&path)?;
+        let left_file = File::open(path)?;
         let left_reader = ipc::reader::StreamReader::try_new(left_file, None)?;
         for rec_batch in left_reader {
             ar_read.push(rec_batch?);

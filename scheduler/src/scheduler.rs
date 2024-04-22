@@ -1,7 +1,7 @@
 use crate::parser::{parse_into_fragments_wrapper, PhysicalPlanFragment, QueryFragmentId};
 use crate::queue::{add_fragments_to_scheduler, finish_fragment};
 use crate::scheduler_interface::*;
-use datafusion::datasource::physical_plan::{FileScanConfig};
+use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion::physical_plan::joins::HashBuildResult;
 use datafusion::physical_plan::ExecutionPlan;
 
@@ -82,7 +82,7 @@ impl Scheduler {
         child_fragment_id: QueryFragmentId,
         fragment_result: QueryResult,
     ) {
-        return finish_fragment(child_fragment_id, fragment_result).await;
+        finish_fragment(child_fragment_id, fragment_result).await
     }
 
     pub fn query_job_status(&self, _query_id: i32) -> QueryStatus {

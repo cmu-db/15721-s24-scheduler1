@@ -115,14 +115,9 @@ impl SchedulerService for MyScheduler {
     ) -> Result<Response<QueryJobStatusRet>, Status> {
         let request_content = request.into_inner();
         let _query_id = request_content.query_id;
-
-        // let scheduler = SCHEDULER_INSTANCE.lock().await;
-        // let query_status = lib::queue::query_job_status(query_id);
         let query_status = 1; // hardcode for now
 
-        let reply = QueryJobStatusRet {
-            query_status: query_status.into(),
-        };
+        let reply = QueryJobStatusRet { query_status };
         Ok(Response::new(reply))
     }
 

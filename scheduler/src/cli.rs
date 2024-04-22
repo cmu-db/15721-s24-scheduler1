@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("failed to read line");
 
         sql = sql.trim().to_string();
-        let priority: i32 = prio.parse().unwrap_or_default();
+        let priority: i32 = prio.trim_end().parse().unwrap_or_default();
         if &sql == "quit" {
             break;
         }
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let get_request = tonic::Request::new(ScheduleQueryArgs {
             physical_plan: physical_plan_bytes.to_vec(),
             metadata: Some(QueryInfo {
-                priority: priority,
+                priority,
                 cost: 0, // from optd
             }),
         });
