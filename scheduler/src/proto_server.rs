@@ -1,4 +1,3 @@
-use datafusion_proto::protobuf::physical_aggregate_expr_node;
 use prost::Message;
 use tonic::{transport::Server, Code, Request, Response, Status};
 
@@ -26,7 +25,9 @@ impl SchedulerService for MyScheduler {
         &self,
         _request: Request<GetQueryArgs>,
     ) -> Result<Response<GetQueryRet>, Status> {
-        let plan = lib::queue::get_plan_from_queue().await;
+        let plan = lib::scheduler::SCHEDULER_INSTANCE
+            .get_plan_from_queue()
+            .await;
 
         match plan {
             Some(p) => {
@@ -85,15 +86,20 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
 
-        let sched_info = lib::queue::schedule_query(physical_plan, metadata.unwrap(), false).await;
+        let sched_info = lib::scheduler::SCHEDULER_INSTANCE
+            .schedule_query(physical_plan, metadata.unwrap(), false)
+            .await;
 
-        let finish_time = std::time::SystemTime::now(); // TODO: send this back over rpc as well, figure out proto type
+        let _finish_time = std::time::SystemTime::now(); // TODO: send this back over rpc as well, figure out proto type
 
-        let (mut tx, mut rx) = mpsc::channel::<Vec<u8>>(1);
+        let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1);
 
         {
-            let mut scheduler = SCHEDULER_INSTANCE.lock().await;
-            scheduler.job_status.insert(sched_info.query_id, tx);
+            SCHEDULER_INSTANCE
+                .job_status
+                .write()
+                .await
+                .insert(sched_info.query_id, tx);
         }
 
         let reply = ScheduleQueryRet {
@@ -108,15 +114,10 @@ impl SchedulerService for MyScheduler {
         request: Request<QueryJobStatusArgs>,
     ) -> Result<Response<QueryJobStatusRet>, Status> {
         let request_content = request.into_inner();
-        let query_id = request_content.query_id;
-
-        // let scheduler = SCHEDULER_INSTANCE.lock().await;
-        // let query_status = lib::queue::query_job_status(query_id);
+        let _query_id = request_content.query_id;
         let query_status = 1; // hardcode for now
 
-        let reply = QueryJobStatusRet {
-            query_status: query_status.into(),
-        };
+        let reply = QueryJobStatusRet { query_status };
         Ok(Response::new(reply))
     }
 
@@ -140,15 +141,21 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
         // let scheduler = SCHEDULER_INSTANCE.lock().await;
-        lib::queue::finish_fragment(
-            fragment_id.try_into().unwrap(),
-            lib::queue::QueryResult::ParquetExec(file_scan_conf),
-        )
-        .await;
+        lib::scheduler::SCHEDULER_INSTANCE
+            .finish_fragment(
+                fragment_id.try_into().unwrap(),
+                lib::scheduler::QueryResult::ParquetExec(file_scan_conf),
+            )
+            .await;
 
         if request_content.root {
-            let mut scheduler = SCHEDULER_INSTANCE.lock().await;
-            if let Some(tx) = scheduler.job_status.remove(&request_content.query_id) {
+            // let mut scheduler = SCHEDULER_INSTANCE.lock().await;
+            if let Some(tx) = SCHEDULER_INSTANCE
+                .job_status
+                .write()
+                .await
+                .remove(&request_content.query_id)
+            {
                 tx.send(request_content.file_scan_config).await.unwrap();
             }
         }
@@ -164,8 +171,7 @@ impl SchedulerService for MyScheduler {
         let request_content = request.into_inner();
         let port = request_content.port;
 
-        let mut scheduler = SCHEDULER_INSTANCE.lock().await;
-        scheduler.register_executor(port);
+        SCHEDULER_INSTANCE.register_executor(port).await;
 
         let reply = RegisterExecutorRet {};
         Ok(Response::new(reply))

@@ -1,5 +1,7 @@
 use crate::parser::PhysicalPlanFragment;
-use crate::queue::{self, finish_fragment, get_plan_from_queue, schedule_query};
+
+use crate::scheduler;
+use crate::scheduler::SCHEDULER_INSTANCE;
 use crate::scheduler_interface::QueryInfo;
 use datafusion::arrow::{array::RecordBatch, datatypes, util::pretty};
 use datafusion::config::TableParquetOptions;
@@ -20,7 +22,7 @@ pub async fn spill_records_to_disk(
     _print: bool,
 ) -> Result<Option<String>, Box<dyn error::Error>> {
     let path_pq = Path::new(filename);
-    let file_pq = File::create(&path_pq)?;
+    let file_pq = File::create(path_pq)?;
     let mut result: Vec<RecordBatch> = vec![];
 
     // WriterProperties can be used to set Parquet file options
@@ -87,7 +89,9 @@ pub async fn process_sql_request(
     let logical_plan = ctx.state().create_logical_plan(sql.as_str()).await?;
     let physical_plan = ctx.state().create_physical_plan(&logical_plan).await?;
 
-    schedule_query(physical_plan, QueryInfo::default(), false).await;
+    SCHEDULER_INSTANCE
+        .schedule_query(physical_plan, QueryInfo::default(), false)
+        .await;
     Ok(())
 }
 
@@ -117,14 +121,15 @@ pub async fn process_physical_fragment(
     )
     .await
     .unwrap();
-    finish_fragment(
-        fragment_id,
-        queue::QueryResult::ParquetExec(local_file_config(
-            output_schema,
-            intermediate_output.as_str(),
-        )),
-    )
-    .await;
+    SCHEDULER_INSTANCE
+        .finish_fragment(
+            fragment_id,
+            scheduler::QueryResult::ParquetExec(local_file_config(
+                output_schema,
+                intermediate_output.as_str(),
+            )),
+        )
+        .await;
 }
 
 pub async fn spin_up(
@@ -135,7 +140,7 @@ pub async fn spin_up(
 ) {
     let born = std::time::SystemTime::now();
     loop {
-        if let Some(fragment) = get_plan_from_queue().await {
+        if let Some(fragment) = SCHEDULER_INSTANCE.get_plan_from_queue().await {
             process_physical_fragment(fragment, &ctx, &abs_path_str, id).await;
         } else {
             if std::time::SystemTime::now().duration_since(born).unwrap() > live_for {
@@ -150,6 +155,7 @@ pub async fn spin_up(
 mod tests {
     use crate::integration::*;
     use crate::parser;
+    use crate::queue;
     use datafusion::arrow::array::RecordBatch;
     use datafusion::arrow::compute::kernels::concat;
     use datafusion::arrow::ipc;
@@ -185,7 +191,7 @@ mod tests {
         // get the recordbatch streams
         let test_schema = pq.schema();
         let context = ctx.state().task_ctx();
-        let mut pq_stream = physical_plan::execute_stream(pq, context)?;
+        let pq_stream = physical_plan::execute_stream(pq, context)?;
 
         // save the parquet to disk
         let pq_filename = format!("{}/src/example_data/spill_test.parquet", abs_path_str);
@@ -203,7 +209,7 @@ mod tests {
 
         let arrow_file = format!("{}/src/example_data/spill_test.arrow", abs_path_str);
         let path = Path::new(&arrow_file);
-        let file = File::create(&path)?;
+        let file = File::create(path)?;
         let mut ar_writer = ipc::writer::StreamWriter::try_new(file, &test_schema)?;
         while let Some(rec_batch) = ar.try_next().await? {
             ar_writer.write(&rec_batch)?;
@@ -212,7 +218,7 @@ mod tests {
 
         // read in left side for comparisons
         let mut ar_read = Vec::<RecordBatch>::new();
-        let left_file = File::open(&path)?;
+        let left_file = File::open(path)?;
         let left_reader = ipc::reader::StreamReader::try_new(left_file, None)?;
         for rec_batch in left_reader {
             ar_read.push(rec_batch?);
@@ -264,12 +270,12 @@ mod tests {
         let context = ctx.state().task_ctx();
         let left_schema = fragments.get(&1).unwrap().root.clone().unwrap().schema();
         let left_path = fragments.get(&1).unwrap().parent_path_from_root.clone();
-        let mut left =
+        let left =
             physical_plan::execute_stream(fragments.remove(&1).unwrap().root.unwrap(), context)?;
         let context = ctx.state().task_ctx();
         let right_schema = fragments.get(&2).unwrap().root.clone().unwrap().schema();
         let right_path = fragments.get(&2).unwrap().parent_path_from_root.clone();
-        let mut right =
+        let right =
             physical_plan::execute_stream(fragments.remove(&2).unwrap().root.unwrap(), context)?;
 
         //spill to disk
@@ -283,12 +289,15 @@ mod tests {
         let root_exec = queue::update_plan_parent(
             root_fragment.root.unwrap(),
             &left_path[0],
-            &queue::QueryResult::ParquetExec(local_file_config(left_schema.clone(), &left_pq_file)),
+            &scheduler::QueryResult::ParquetExec(local_file_config(
+                left_schema.clone(),
+                &left_pq_file,
+            )),
         );
         let root_exec = queue::update_plan_parent(
             root_exec,
             &right_path[0],
-            &queue::QueryResult::ParquetExec(local_file_config(
+            &scheduler::QueryResult::ParquetExec(local_file_config(
                 right_schema.clone(),
                 &right_pq_file,
             )),
