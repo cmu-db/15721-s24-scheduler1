@@ -13,9 +13,11 @@ use core::time;
 use datafusion::prelude::*;
 use lib::integration::{local_file_config, scan_from_parquet, spill_records_to_disk};
 use prost::Message;
-use std::{env, path};
 use std::thread::{self, sleep};
 use std::time::Duration;
+use std::{env, path};
+
+use lib::debug_println;
 
 #[derive(Debug, Default)]
 pub struct MyExecutor {}
@@ -34,10 +36,7 @@ impl ExecutorService for MyExecutor {
     }
 }
 
-async fn integration_process(
-    get_query_response: GetQueryRet,
-    ctx: &SessionContext,
-) -> FileScanConfig {
+async fn process_fragment(get_query_response: GetQueryRet, ctx: &SessionContext) -> FileScanConfig {
     let wd = env::current_dir().unwrap();
     let wd_str = wd.to_str().unwrap();
 
@@ -48,7 +47,9 @@ async fn integration_process(
     let context = ctx.state().task_ctx();
     let mut output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
 
-    let intermediate_output = format!("{wd_str}/scheduler/src/example_data/query_{query_id}_fragment_{fragment_id}.parquet");
+    let intermediate_output = format!(
+        "{wd_str}/scheduler/src/example_data/query_{query_id}_fragment_{fragment_id}.parquet"
+    );
 
     spill_records_to_disk(
         &intermediate_output,
@@ -66,18 +67,18 @@ async fn initialize(port: i32) {
         panic!("Scheduler port environment variable not set");
     });
     let uri = format!("http://[::1]:{scheduler_service_port}");
-    println!("Attempting to connect to the scheduler at {uri}");
-    let mut client = SchedulerServiceClient::connect(uri)
+    let mut client = SchedulerServiceClient::connect(uri.clone())
         .await
         .unwrap_or_else(|error| {
             panic!("Unable to connect to the scheduler instance: {:?}", error);
         });
 
-    // let request = tonic::Request::new(crate::scheduler_interface::RegisterExecutorArgs { port });
-    // let response = client.register_executor(request).await;
-    // println!("Registered with the scheduler at http://[::1]:{scheduler_service_port}");
-    println!("connected");
+    debug_println!(
+        "executor at port {port} connected to the scheduler at {}",
+        &uri
+    );
     let ctx = SessionContext::new();
+
     loop {
         let get_request = tonic::Request::new(GetQueryArgs {});
         match client.get_query(get_request).await {
@@ -87,46 +88,50 @@ async fn initialize(port: i32) {
                     sleep(time::Duration::from_millis(500));
                     continue;
                 }
-                // request should be a enum later where one variant is break
-                let interm_file = integration_process(response.clone(), &ctx).await;
+
+                let interm_file = process_fragment(response.clone(), &ctx).await;
                 let interm_proto = FileScanExecConf::try_from(&interm_file).unwrap();
 
                 let finished_request = tonic::Request::new(QueryExecutionDoneArgs {
                     fragment_id: response.fragment_id,
                     status: 0,
                     file_scan_config: interm_proto.encode_to_vec(),
+                    root: response.root,
+                    query_id: response.query_id,
                 });
 
                 match client.query_execution_done(finished_request).await {
-                    Err(e) => println!("Finished reply unsuccessful: {:?}", e),
-                    Ok(_finished_response) => println!("reply for finishing query frag received"),
+                    Err(e) => {
+                        debug_println!("Finished reply unsuccessful: {:?}", e);
+                        //client.kill_query_execution(); TODO
+                    }
+                    Ok(_finished_response) => {
+                        debug_println!("reply for finishing query frag received");
+                        debug_println!("response : {:?}", _finished_response);
+                    }
                 }
             }
 
-            Err(e) => {
-                println!("Query get unsuccessful: {:?}", e);
-                if e.code() == Code::Unavailable {
+            Err(e) => match e.code() {
+                Code::Unavailable => {
+                    debug_println!("get_query rpc unsuccessful: {:?}", e);
+                    debug_println!("executor on port {port} is exiting");
                     break;
                 }
-                sleep(time::Duration::from_millis(500));
-            }
+                _ => {
+                    debug_println!("unhandled status {:?}", e);
+                    debug_println!("go implement handler, sleeping for 500ms...");
+                    sleep(time::Duration::from_millis(500));
+                }
+            },
         };
     }
-
-    // let addr = format!("[::1]:{port}").parse().unwrap();
-    // println!("Executor server listening on {addr}");
-    // let executor = MyExecutor::default();
-
-    // Server::builder()
-    //     .add_service(ExecutorServiceServer::new(executor))
-    //     .serve(addr)
-    //     .await;
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    println!("{:?}", args);
+    debug_println!("{:?}", args);
 
     let num_workers: i32 = args[1].parse().unwrap();
 

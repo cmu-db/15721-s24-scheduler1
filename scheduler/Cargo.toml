@@ -14,8 +14,8 @@ name = "scheduler-api-server"
 path = "src/proto_server.rs"
 
 [[bin]]
-name = "mock-executor"
-path = "src/mock_executor.rs"
+name = "executor"
+path = "src/executor.rs"
 
 [[bin]]
 name = "cli"

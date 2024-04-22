@@ -1,38 +1,24 @@
 use crate::parser::PhysicalPlanFragment;
-use crate::queue;
-use crate::queue::finish_fragment;
-use crate::queue::{get_plan_from_queue, schedule_query};
+use crate::queue::{self, finish_fragment, get_plan_from_queue, schedule_query};
 use crate::scheduler_interface::QueryInfo;
-use datafusion::arrow::array::RecordBatch;
-use datafusion::arrow::datatypes;
-use datafusion::arrow::util::pretty;
+use datafusion::arrow::{array::RecordBatch, datatypes, util::pretty};
 use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileScanConfig, ParquetExec};
-use datafusion::execution::object_store;
-use datafusion::execution::RecordBatchStream;
-use datafusion::parquet::arrow;
-use datafusion::parquet::basic::Compression;
-use datafusion::parquet::file::properties::WriterProperties;
-use datafusion::physical_plan;
-use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_plan::Statistics;
+use datafusion::execution::{object_store, RecordBatchStream};
+use datafusion::parquet::{arrow, basic::Compression, file::properties::WriterProperties};
+use datafusion::physical_plan::{self, ExecutionPlan, Statistics};
 use datafusion::prelude::*;
 use futures::stream::TryStreamExt;
-use std::error;
-use std::fs::File;
-use std::path::Path;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::vec;
+use std::{error, fs::File, path::Path, pin::Pin, sync::Arc};
 
 // think about splitting large parquet files
 pub async fn spill_records_to_disk(
     filename: &str,
     mut rb_stream: Pin<Box<dyn RecordBatchStream + Send>>,
     schema: datatypes::SchemaRef,
-    print: bool,
-) -> Result<(), Box<dyn error::Error>> {
+    _print: bool,
+) -> Result<Option<String>, Box<dyn error::Error>> {
     let path_pq = Path::new(filename);
     let file_pq = File::create(&path_pq)?;
     let mut result: Vec<RecordBatch> = vec![];
@@ -44,20 +30,21 @@ pub async fn spill_records_to_disk(
     let mut writer = arrow::ArrowWriter::try_new(file_pq, schema.clone(), Some(props)).unwrap();
 
     // write to disk
-    let mut num_rows = 0;
+    let mut _num_rows = 0;
     while let Some(rec_batch) = rb_stream.try_next().await.unwrap() {
-        num_rows += rec_batch.num_rows();
+        _num_rows += rec_batch.num_rows();
         writer.write(&rec_batch).expect("Writing batch");
         result.push(rec_batch);
     }
 
     // writer must be closed to write footer
     writer.close()?;
-    if print {
+
+    let _print = false;
+    if _print {
         pretty::print_batches(&result).unwrap();
-        println!("{} has {} records", filename, num_rows);
     }
-    Ok(())
+    Ok(Some(String::new()))
 }
 
 pub fn scan_from_parquet(file_config: FileScanConfig) -> Arc<dyn ExecutionPlan> {
@@ -69,7 +56,7 @@ pub fn scan_from_parquet(file_config: FileScanConfig) -> Arc<dyn ExecutionPlan> 
     ))
 }
 
-// think about parallel reads using partitioned files
+// think about parallel reads using partitioned file groups
 pub fn local_file_config(schema: datatypes::SchemaRef, filename: &str) -> FileScanConfig {
     let pq_file = PartitionedFile::from_path(filename.to_string()).unwrap();
 
@@ -97,7 +84,6 @@ pub async fn process_sql_request(
                         ORDER by a.order_id",
         item_id
     );
-    // println!("{}", sql);
     let logical_plan = ctx.state().create_logical_plan(sql.as_str()).await?;
     let physical_plan = ctx.state().create_physical_plan(&logical_plan).await?;
 
@@ -121,7 +107,7 @@ pub async fn process_physical_fragment(
     let intermediate_output =
         format!("{abs_path_str}/src/query_{query_id}_fragment_{fragment_id}_pid_{id}.parquet");
     let context = ctx.state().task_ctx();
-    let mut output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
+    let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
 
     spill_records_to_disk(
         &intermediate_output,
@@ -164,9 +150,6 @@ pub async fn spin_up(
 mod tests {
     use crate::integration::*;
     use crate::parser;
-    use crate::queue::get_plan_from_queue;
-    use crate::queue::schedule_query;
-    use crate::scheduler_interface::QueryInfo;
     use datafusion::arrow::array::RecordBatch;
     use datafusion::arrow::compute::kernels::concat;
     use datafusion::arrow::ipc;
@@ -177,7 +160,6 @@ mod tests {
     async fn spill_test() -> Result<(), Box<dyn error::Error>> {
         let abs_path = std::fs::canonicalize(".")?;
         let abs_path_str = abs_path.to_str().unwrap();
-        println!("{}", abs_path_str);
 
         // register the table
         let ctx = SessionContext::new();

@@ -9,9 +9,11 @@ use tokio::sync::Mutex;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
+use super::debug_println;
+use std::sync::Arc;
+use tokio::sync::mpsc::Sender;
 
 #[derive(Debug)]
 struct ExecutorHandle {
@@ -22,6 +24,7 @@ struct ExecutorHandle {
 pub struct Scheduler {
     pub all_fragments: HashMap<QueryFragmentId, PhysicalPlanFragment>,
     pub pending_fragments: Vec<QueryFragmentId>,
+    pub job_status: HashMap<i32, Sender<Vec<u8>>>,
     executors: Vec<ExecutorHandle>,
 }
 
@@ -45,16 +48,16 @@ pub enum PipelineBreakers {
 pub struct IntermediateNode {}
 
 impl Scheduler {
-    // pub async fn schedule_query(
-    //     &self,
-    //     physical_plan: Arc<dyn ExecutionPlan>,
-    //     _query_info: QueryInfo,
-    // ) -> i32 {
-    //     let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-    //     let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, false).await;
-    //     add_fragments_to_scheduler(fragments);
-    //     return 0;
-    // }
+    pub async fn schedule_query(
+        &self,
+        physical_plan: Arc<dyn ExecutionPlan>,
+        _query_info: QueryInfo,
+    ) -> i32 {
+        let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+        let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, false).await;
+        add_fragments_to_scheduler(fragments).await;
+        return 0;
+    }
 
     pub fn query_job_status(&self, _query_id: i32) -> QueryStatus {
         unimplemented!()
@@ -68,7 +71,7 @@ impl Scheduler {
 
     pub fn register_executor(&mut self, port: i32) {
         self.executors.push(ExecutorHandle { port });
-        println!("Executor registered; port={port}");
+        debug_println!("Executor registered; port={port}");
     }
 
     pub async fn get_plan_from_queue(&self) -> Option<PhysicalPlanFragment> {
@@ -80,6 +83,7 @@ lazy_static! {
     pub static ref SCHEDULER_INSTANCE: Mutex<Scheduler> = Mutex::new(Scheduler {
         all_fragments: HashMap::new(),
         pending_fragments: vec![],
+        job_status: HashMap::<i32, Sender<Vec<u8>>>::new(),
         executors: vec![],
     });
 }

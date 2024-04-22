@@ -46,6 +46,19 @@ message ScheduleQueryArgs {
 message ScheduleQueryRet {
     // The identifier to refer to this query execution.
     int32 query_id = 1;
+
+
+    // The path info for intermediate files
+    bytes file_scan_config = 2;
+
+    // The status of query execution.
+    //QueryStatus status = 3;
+
+    // TODO
+    // enqueue_time
+
+    // TODO
+    // finish_time
 }
 
 // Arguments required to query the status of a job.
@@ -68,7 +81,13 @@ message QueryExecutionDoneArgs {
     // The status of query execution.
     QueryStatus status = 2;
 
+    // The path info for intermediate files
     bytes file_scan_config = 3;
+    
+    // Whether the file is root
+    bool root = 4;
+
+    int32 query_id = 5;
 }
 
 // Information returned from the QueryExecutionDone RPC.
