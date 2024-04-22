@@ -1,21 +1,21 @@
 use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion_proto::bytes::physical_plan_from_bytes;
 use datafusion_proto::protobuf::FileScanExecConf;
-use lib::executor_interface::executor_service_server::{ExecutorService, ExecutorServiceServer};
+use lib::executor_interface::executor_service_server::{ExecutorService};
 use lib::executor_interface::{ExecuteQueryArgs, ExecuteQueryRet};
 use lib::scheduler_interface::scheduler_service_client::SchedulerServiceClient;
 
 use lib::scheduler_interface::{GetQueryArgs, GetQueryRet, QueryExecutionDoneArgs};
 use tokio::runtime::Handle;
-use tonic::{transport::Server, Code, Request, Response, Status};
+use tonic::{Code, Request, Response, Status};
 
 use core::time;
 use datafusion::prelude::*;
-use lib::integration::{local_file_config, scan_from_parquet, spill_records_to_disk};
+use lib::integration::{local_file_config, spill_records_to_disk};
 use prost::Message;
-use std::thread::{self, sleep};
-use std::time::Duration;
-use std::{env, path};
+use std::thread::{sleep};
+
+use std::{env};
 
 use lib::debug_println;
 
@@ -29,7 +29,7 @@ impl ExecutorService for MyExecutor {
         &self,
         request: Request<ExecuteQueryArgs>,
     ) -> Result<Response<ExecuteQueryRet>, Status> {
-        let request_content = request.into_inner();
+        let _request_content = request.into_inner();
 
         let reply = ExecuteQueryRet {};
         Ok(Response::new(reply))
@@ -45,7 +45,7 @@ async fn process_fragment(get_query_response: GetQueryRet, ctx: &SessionContext)
     let process_plan = physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
     let output_schema = process_plan.schema();
     let context = ctx.state().task_ctx();
-    let mut output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
+    let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
 
     let intermediate_output = format!(
         "{wd_str}/scheduler/src/example_data/query_{query_id}_fragment_{fragment_id}.parquet"
@@ -63,7 +63,7 @@ async fn process_fragment(get_query_response: GetQueryRet, ctx: &SessionContext)
 }
 
 async fn initialize(port: i32) {
-    let scheduler_service_port = env::var("SCHEDULER_PORT").unwrap_or_else(|error| {
+    let scheduler_service_port = env::var("SCHEDULER_PORT").unwrap_or_else(|_error| {
         panic!("Scheduler port environment variable not set");
     });
     let uri = format!("http://[::1]:{scheduler_service_port}");
@@ -138,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handles = Vec::new();
     let base_port = 5555;
 
-    let handle = Handle::current;
+    let _handle = Handle::current;
 
     for i in 0..num_workers {
         handles.push(tokio::spawn(async move {
