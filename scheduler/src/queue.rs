@@ -9,9 +9,13 @@ use datafusion::{
     physical_plan::joins::HashBuildResult,
 };
 
+use super::debug_println;
 use crate::scheduler_interface::QueryInfo;
 use datafusion::physical_plan::ExecutionPlan;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    alloc::System,
+    sync::atomic::{AtomicU64, Ordering},
+};
 use std::{collections::HashMap, sync::Arc, time::SystemTime};
 
 static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
@@ -22,16 +26,24 @@ pub enum QueryResult {
     ParquetExec(FileScanConfig),
 }
 
+pub struct ScheduleResult {
+    pub query_id: i32,
+    pub enqueue_time: SystemTime,
+}
+
 /// Schedule an execution plan
 pub async fn schedule_query(
     physical_plan: Arc<dyn ExecutionPlan>,
     _query_info: QueryInfo,
     pipelined: bool,
-) -> i32 {
+) -> ScheduleResult {
     let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
     let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, pipelined).await;
     add_fragments_to_scheduler(fragments).await;
-    query_id.try_into().unwrap()
+    ScheduleResult {
+        query_id: query_id.try_into().unwrap(),
+        enqueue_time: SystemTime::now(),
+    }
 }
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
@@ -39,18 +51,19 @@ pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, Physic
     let mut scheduler_instance = SCHEDULER_INSTANCE.lock().await;
     for (&id, fragment) in map.iter_mut() {
         if fragment.child_fragments.is_empty() {
-            // println!(
-            //     "Pushing qid {} fid {} into pending_fragments",
-            //     fragment.query_id, fragment.fragment_id
-            // );
+            debug_println!(
+                "Pushing qid {} fid {} into pending_fragments",
+                fragment.query_id,
+                fragment.fragment_id
+            );
             scheduler_instance.pending_fragments.push(id);
             fragment.enqueued_time = Some(SystemTime::now());
         }
     }
-    // println!(
-    //     "pending_fragments length {}",
-    //     scheduler_instance.pending_fragments.len()
-    // );
+    debug_println!(
+        "{} fragments available to be executed in pending queue",
+        scheduler_instance.pending_fragments.len()
+    );
     scheduler_instance.all_fragments.extend(map);
 }
 
@@ -78,12 +91,8 @@ pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
 
     let mut ref_id: Option<QueryFragmentId> = None;
     let mut ref_priority: i128 = 0;
-    // println!( "getting fragment from a pending_fragment length of {}",
-    //     scheduler_instance.pending_fragments.len()
-    // );
     for fragment_id in &scheduler_instance.pending_fragments {
         let frag = scheduler_instance.all_fragments.get(fragment_id).unwrap();
-        // println!("Considering qid {} fid {}", frag.query_id, frag.fragment_id);
         let priority = get_priority_from_fragment(frag);
         if priority > ref_priority || ref_id.is_none() {
             ref_id = Some(*fragment_id);
@@ -102,6 +111,12 @@ pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
         .all_fragments
         .get(&ref_id.unwrap())
         .unwrap();
+
+    debug_println!(
+        "fetched 1 fragment, {} left available to be executed in pending queue",
+        scheduler_instance.pending_fragments.len()
+    );
+
     Some(fragment.clone())
 }
 
@@ -172,6 +187,10 @@ pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result
     }
     scheduler_instance.all_fragments.remove(&child_fragment_id);
     scheduler_instance.pending_fragments.extend(new_ids_to_push);
+    debug_println!(
+        "Updated finished fragments, {} left available to be executed in pending queue",
+        scheduler_instance.pending_fragments.len()
+    );
 }
 
 fn create_arrow_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPlan> {

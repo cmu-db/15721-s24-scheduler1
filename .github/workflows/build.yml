@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ "main", "mock_exec" ]
+    branches: [ "main", "cli"]
   pull_request:
     branches: [ "main" ]
 
