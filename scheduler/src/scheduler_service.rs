@@ -9,18 +9,20 @@ use datafusion_proto::physical_plan::from_proto;
 use datafusion_proto::protobuf::FileScanExecConf;
 
 use chronos::scheduler::SCHEDULER_INSTANCE;
-use chronos::scheduler_interface::scheduler_service_server::SchedulerService;
-use chronos::scheduler_interface::scheduler_service_server::SchedulerServiceServer;
+use chronos::scheduler_interface::scheduler_server::Scheduler;
+use chronos::scheduler_interface::scheduler_server::SchedulerServer;
 use chronos::scheduler_interface::*;
 
 use bytes::IntoBuf;
 use tokio::sync::mpsc;
 
+use std::time::UNIX_EPOCH;
+
 #[derive(Debug, Default)]
 pub struct MyScheduler {}
 
 #[tonic::async_trait]
-impl SchedulerService for MyScheduler {
+impl Scheduler for MyScheduler {
     async fn get_query(
         &self,
         _request: Request<GetQueryArgs>,
@@ -90,8 +92,6 @@ impl SchedulerService for MyScheduler {
             .schedule_query(physical_plan, metadata.unwrap(), false)
             .await;
 
-        let _finish_time = std::time::SystemTime::now(); // TODO: send this back over rpc as well, figure out proto type
-
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1);
 
         {
@@ -105,6 +105,7 @@ impl SchedulerService for MyScheduler {
         let reply = ScheduleQueryRet {
             query_id: sched_info.query_id,
             file_scan_config: rx.recv().await.unwrap_or_default(),
+            enqueue_time: sched_info.enqueue_time.duration_since(UNIX_EPOCH).unwrap().as_millis().try_into().unwrap()
         };
         Ok(Response::new(reply))
     }
@@ -173,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Scheduler server listening on {addr}");
 
     Server::builder()
-        .add_service(SchedulerServiceServer::new(scheduler))
+        .add_service(SchedulerServer::new(scheduler))
         .serve(addr)
         .await?;
 

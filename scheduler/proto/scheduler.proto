@@ -47,15 +47,15 @@ message ScheduleQueryRet {
     // The identifier to refer to this query execution.
     int32 query_id = 1;
 
-
     // The path info for intermediate files
     bytes file_scan_config = 2;
 
     // The status of query execution.
     //QueryStatus status = 3;
 
-    // TODO
-    // enqueue_time
+    // The time the query was scheduled for execution in miliseconds since
+    // the Unix epoch.
+    uint64 enqueue_time = 3;
 
     // TODO
     // finish_time
@@ -111,7 +111,7 @@ message GetQueryRet {
 }
 
 // The scheduler interface.
-service SchedulerService {
+service Scheduler {
 
     // Used by the optimizer to schedule a new query.
     rpc ScheduleQuery(ScheduleQueryArgs) returns (ScheduleQueryRet);

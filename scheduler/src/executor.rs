@@ -1,6 +1,6 @@
 use chronos::executor_interface::executor_service_server::ExecutorService;
 use chronos::executor_interface::{ExecuteQueryArgs, ExecuteQueryRet};
-use chronos::scheduler_interface::scheduler_service_client::SchedulerServiceClient;
+use chronos::scheduler_interface::scheduler_client::SchedulerClient;
 use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion_proto::bytes::physical_plan_from_bytes;
 use datafusion_proto::protobuf::FileScanExecConf;
@@ -67,7 +67,7 @@ async fn initialize(port: i32) {
         panic!("Scheduler port environment variable not set");
     });
     let uri = format!("http://[::1]:{scheduler_service_port}");
-    let mut client = SchedulerServiceClient::connect(uri.clone())
+    let mut client = SchedulerClient::connect(uri.clone())
         .await
         .unwrap_or_else(|error| {
             panic!("Unable to connect to the scheduler instance: {:?}", error);

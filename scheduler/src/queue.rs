@@ -1,5 +1,5 @@
 use crate::{
-    parser::{PhysicalPlanFragment, QueryFragmentId},
+    parser::{QueryFragment, QueryFragmentId},
     scheduler::{QueryResult, SCHEDULER_INSTANCE},
 };
 use datafusion::config::TableParquetOptions;
@@ -14,7 +14,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use std::{collections::HashMap, sync::Arc, time::SystemTime};
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
-pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, PhysicalPlanFragment>) {
+pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, QueryFragment>) {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
     for (&id, fragment) in map.iter_mut() {
@@ -36,7 +36,7 @@ pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, Physic
 }
 
 // Some assumptions have been made about priorites which may change
-pub fn get_priority_from_fragment(fragment: &PhysicalPlanFragment) -> i128 {
+pub fn get_priority_from_fragment(fragment: &QueryFragment) -> i128 {
     let time = fragment
         .enqueued_time
         .unwrap()
@@ -53,8 +53,8 @@ pub fn get_priority_from_fragment(fragment: &PhysicalPlanFragment) -> i128 {
     priority + cost_offset
 }
 
-/// Get the plan with the highest priorty from the queue
-pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
+/// Get the plan with the highest priorty from the queue.
+pub async fn get_plan_from_queue() -> Option<QueryFragment> {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let all_fragments = SCHEDULER_INSTANCE.all_fragments.read().await;
 
@@ -261,7 +261,7 @@ mod tests {
         validate_toy_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragment = PhysicalPlanFragment {
+        let fragment = QueryFragment {
             fragment_id: 0,
             query_id: 0,
             root: Some(physical_plan),
@@ -272,7 +272,7 @@ mod tests {
             enqueued_time: None,
             fragment_cost: None,
         };
-        let mut map: HashMap<QueryFragmentId, PhysicalPlanFragment> = HashMap::new();
+        let mut map: HashMap<QueryFragmentId, QueryFragment> = HashMap::new();
         map.insert(0, fragment);
         add_fragments_to_scheduler(map).await;
         let queued_fragment = get_plan_from_queue().await.unwrap();
@@ -351,7 +351,7 @@ mod tests {
         add_fragments_to_scheduler(fragment_map).await;
         assert_eq!(SCHEDULER_INSTANCE.pending_fragments.read().await.len(), 2);
 
-        let mut child_fragment_vec = Vec::<PhysicalPlanFragment>::new();
+        let mut child_fragment_vec = Vec::<QueryFragment>::new();
 
         let mut queued_fragment = get_plan_from_queue().await.unwrap();
         assert!(queued_fragment.root.is_some());

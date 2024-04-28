@@ -19,17 +19,17 @@ pub type QueryFragmentId = u64;
 
 // Metadata struct for now
 #[derive(Debug, Clone)]
-pub struct PhysicalPlanFragment {
-    // The id assigned with this [`PhysicalPlanFragment`]
+pub struct QueryFragment {
+    // The id assigned with this [`QueryFragment`]
     pub fragment_id: QueryFragmentId,
 
     // The id of the query which this plan fragment belongs to
     pub query_id: QueryId,
 
-    // the entry into this [`PhysicalPlanFragment`]
+    // the entry into this [`QueryFragment`]
     pub root: Option<Arc<dyn ExecutionPlan>>,
 
-    // convenience pointers into the parent [`PhysicalPlanFragment`]
+    // convenience pointers into the parent [`QueryFragment`]
     pub parent_path_from_root: Vec<Vec<u32>>,
 
     // vector of dependant fragment ids
@@ -49,10 +49,11 @@ pub struct PhysicalPlanFragment {
 }
 
 // Function to populate the cost of running a fragment.
+//
 // Currently it goes through all the execution plan nodes in the fragment
 // and sums up the number of rows based on provided statistics.
-// It can later used for sophisticated costs provided by the optimizer
-async fn populate_fragment_cost(fragment: &mut PhysicalPlanFragment) {
+// It can later used for sophisticated costs provided by the optimizer.
+async fn populate_fragment_cost(fragment: &mut QueryFragment) {
     let mut cur_cost = 0;
     let root = fragment.root.clone().unwrap();
 
@@ -86,12 +87,12 @@ pub async fn parse_into_fragments_wrapper(
     query_id: u64,
     priority: i64,
     pipelined: bool,
-) -> HashMap<QueryFragmentId, PhysicalPlanFragment> {
+) -> HashMap<QueryFragmentId, QueryFragment> {
     let fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
 
-    let mut output = HashMap::<QueryFragmentId, PhysicalPlanFragment>::new();
+    let mut output = HashMap::<QueryFragmentId, QueryFragment>::new();
 
-    let root_fragment = PhysicalPlanFragment {
+    let root_fragment = QueryFragment {
         query_id,
         fragment_id,
         root: None,
@@ -126,7 +127,7 @@ pub async fn parse_into_fragments_wrapper(
 pub async fn parse_into_fragments(
     root: Arc<dyn ExecutionPlan>,
     fragment_id: QueryFragmentId,
-    output: &mut HashMap<QueryFragmentId, PhysicalPlanFragment>,
+    output: &mut HashMap<QueryFragmentId, QueryFragment>,
     query_id: u64,
     mut path: Vec<u32>,
     priority: i64,
@@ -159,7 +160,7 @@ pub async fn parse_into_fragments(
         let build_side = node.left.clone();
 
         let build_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let build_fragment = PhysicalPlanFragment {
+        let build_fragment = QueryFragment {
             query_id,
             fragment_id: build_fragment_id,
             root: None,
@@ -226,7 +227,7 @@ pub async fn parse_into_fragments(
 
     for (child_num, child) in (0_u32..).zip(children.into_iter()) {
         let child_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let child_query_fragment = PhysicalPlanFragment {
+        let child_query_fragment = QueryFragment {
             query_id,
             fragment_id: child_fragment_id,
             root: None,
@@ -269,7 +270,7 @@ pub async fn parse_into_fragments(
 pub async fn parse_into_fragments_naive(
     root: Arc<dyn ExecutionPlan>,
     fragment_id: QueryFragmentId,
-    output: &mut HashMap<QueryFragmentId, PhysicalPlanFragment>,
+    output: &mut HashMap<QueryFragmentId, QueryFragment>,
     query_id: u64,
     mut path: Vec<u32>,
     priority: i64,
@@ -300,7 +301,7 @@ pub async fn parse_into_fragments_naive(
 
     for (child_num, child) in (0_u32..).zip(children.into_iter()) {
         let child_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let child_query_fragment = PhysicalPlanFragment {
+        let child_query_fragment = QueryFragment {
             query_id,
             fragment_id: child_fragment_id,
             root: None,
@@ -531,7 +532,7 @@ mod tests {
         assert_eq!(fragments.len(), 3);
 
         let mut root_fragment = None;
-        let mut child_fragment_vec = Vec::<PhysicalPlanFragment>::new();
+        let mut child_fragment_vec = Vec::<QueryFragment>::new();
         for (_, fragment) in fragments {
             assert!(fragment.root.is_some());
             if fragment.root.as_ref().unwrap().children().len() == 2 {

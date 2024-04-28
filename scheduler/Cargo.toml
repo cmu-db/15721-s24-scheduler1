@@ -10,15 +10,15 @@ name = "chronos"
 path = "src/lib.rs"
 
 [[bin]]
-name = "scheduler-api-server"
+name = "scheduler-service"
 path = "src/scheduler_service.rs"
 
 [[bin]]
-name = "executor"
+name = "executor-service"
 path = "src/executor.rs"
 
 [[bin]]
-name = "cli"
+name = "scheduler-cli"
 path = "src/cli.rs"
 
 [dependencies]
