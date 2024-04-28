@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
+use std::collections::HashSet;
 
 static FRAGMENT_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
@@ -46,6 +47,8 @@ pub struct PhysicalPlanFragment {
 
     // Cost of running this fragment
     pub fragment_cost: Option<usize>,
+
+    pub intermediate_files: HashSet<String>,
 }
 
 // Function to populate the cost of running a fragment.
@@ -101,6 +104,7 @@ pub async fn parse_into_fragments_wrapper(
         query_priority: priority,
         enqueued_time: None,
         fragment_cost: None,
+        intermediate_files: HashSet::<String>::new(),
     };
     let path = Vec::<u32>::new();
     output.insert(root_fragment.fragment_id, root_fragment);
@@ -169,6 +173,7 @@ pub async fn parse_into_fragments(
             enqueued_time: None,
             fragment_cost: None,
             query_priority: 0,
+            intermediate_files: HashSet::<String>::new(),
         };
         output.insert(build_fragment_id, build_fragment);
 
@@ -236,6 +241,7 @@ pub async fn parse_into_fragments(
             query_priority: priority,
             enqueued_time: None,
             fragment_cost: None,
+            intermediate_files: HashSet::<String>::new(),
         };
         output.insert(child_fragment_id, child_query_fragment);
 
@@ -310,6 +316,7 @@ pub async fn parse_into_fragments_naive(
             query_priority: priority,
             enqueued_time: None,
             fragment_cost: None,
+            intermediate_files: HashSet::<String>::new(),
         };
         output.insert(child_fragment_id, child_query_fragment);
 

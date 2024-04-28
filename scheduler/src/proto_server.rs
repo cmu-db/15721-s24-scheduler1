@@ -142,11 +142,12 @@ impl SchedulerService for MyScheduler {
             let status = Status::new(Code::InvalidArgument, "Query status not specified");
             return Err(status);
         }
-        // let scheduler = SCHEDULER_INSTANCE.lock().await;
-        lib::scheduler::SCHEDULER_INSTANCE
+
+        let to_delete = lib::scheduler::SCHEDULER_INSTANCE
             .finish_fragment(
                 fragment_id.try_into().unwrap(),
-                lib::scheduler::QueryResult::ParquetExec(file_scan_conf),
+                lib::scheduler::QueryResult::ParquetExec(file_scan_conf.clone()),
+                file_scan_conf.file_groups,
             )
             .await;
 
@@ -162,7 +163,7 @@ impl SchedulerService for MyScheduler {
             }
         }
 
-        let reply = QueryExecutionDoneRet {};
+        let reply = QueryExecutionDoneRet { intermediate_files: to_delete};
         Ok(Response::new(reply))
     }
 

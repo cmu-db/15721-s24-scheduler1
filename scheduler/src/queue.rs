@@ -2,7 +2,7 @@ use crate::{
     parser::{PhysicalPlanFragment, QueryFragmentId},
     scheduler::{QueryResult, SCHEDULER_INSTANCE},
 };
-use datafusion::config::TableParquetOptions;
+use datafusion::{config::TableParquetOptions, datasource::listing::PartitionedFile};
 use datafusion::{
     datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
     physical_plan::joins::HashBuildExec,
@@ -11,7 +11,7 @@ use datafusion::{
 use super::debug_println;
 
 use datafusion::physical_plan::ExecutionPlan;
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, sync::Arc, time::SystemTime, collections::HashSet};
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
 pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, PhysicalPlanFragment>) {
@@ -113,9 +113,10 @@ pub fn update_plan_parent(
     root.with_new_children(new_children).unwrap()
 }
 
-pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result: QueryResult) {
+pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result: QueryResult, intermediate_files: Vec<Vec<PartitionedFile>>) -> Vec<String> {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
+    let mut intermediate_file_pin = SCHEDULER_INSTANCE.intermediate_files.write().await;
     let parent_fragment_ids = all_fragments
         .get(&child_fragment_id)
         .unwrap()
@@ -127,6 +128,31 @@ pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result
         .unwrap()
         .parent_path_from_root
         .clone();
+
+    // these intermediate files belongs to the child_fragment which has been processed and should be deleted
+    let child_fragment_intermediate_files = all_fragments
+        .get(&child_fragment_id)
+        .unwrap()
+        .intermediate_files
+        .clone()
+        .into_iter();
+
+    let mut to_delete: Vec<String> = vec![];
+
+    for file in child_fragment_intermediate_files {
+        match intermediate_file_pin.get_mut(&file) {
+            None => debug_println!("This is a intermediate file that wasn't recorded or undercounted"),
+            Some(1) => {
+                intermediate_file_pin.remove(&file);
+                to_delete.push(file);
+            },
+            Some(k) => {
+                debug_assert!(*k > 1);
+                *k -= 1;
+            }
+        }
+
+    }
 
     let mut new_ids_to_push = vec![];
     for (i, id) in parent_fragment_ids.iter().enumerate() {
@@ -140,6 +166,13 @@ pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result
         );
 
         parent_fragment.root = Some(new_root);
+
+        for partition in intermediate_files.clone().into_iter() {
+            for file in partition.clone().into_iter() {
+                *intermediate_file_pin.entry(file.path().to_string()).or_insert(0) += 1;
+                parent_fragment.intermediate_files.insert(file.path().to_string());
+            }
+        }
 
         parent_fragment
             .child_fragments
@@ -155,6 +188,8 @@ pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result
         "Updated finished fragments, {} left available to be executed in pending queue",
         pending_fragments.len()
     );
+
+    to_delete
 }
 
 fn create_arrow_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPlan> {
@@ -272,6 +307,7 @@ mod tests {
             query_priority: 0,
             enqueued_time: None,
             fragment_cost: None,
+            intermediate_files: HashSet::<String>::new(),
         };
         let mut map: HashMap<QueryFragmentId, PhysicalPlanFragment> = HashMap::new();
         map.insert(0, fragment);
@@ -376,6 +412,7 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
+            vec![vec![]],
         )
         .await;
 
@@ -394,6 +431,7 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
+            vec![vec![]],
         )
         .await;
 
