@@ -163,7 +163,9 @@ impl SchedulerService for MyScheduler {
             }
         }
 
-        let reply = QueryExecutionDoneRet { intermediate_files: to_delete};
+        let reply = QueryExecutionDoneRet {
+            intermediate_files: to_delete,
+        };
         Ok(Response::new(reply))
     }
 
