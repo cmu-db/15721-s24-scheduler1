@@ -1,5 +1,5 @@
 use crate::parser::{parse_into_fragments_wrapper, PhysicalPlanFragment, QueryFragmentId};
-use crate::queue::{add_fragments_to_scheduler, finish_fragment, abort_query};
+use crate::queue::{abort_query, add_fragments_to_scheduler, finish_fragment};
 use crate::scheduler_interface::*;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::FileScanConfig;
@@ -11,7 +11,6 @@ use lazy_static::lazy_static;
 use tokio::sync::RwLock;
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 

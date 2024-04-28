@@ -1,6 +1,4 @@
 use prost::Message;
-use tokio::runtime;
-use tokio::runtime::Builder;
 use tokio::runtime::Handle;
 use tonic::{transport::Server, Code, Request, Response, Status};
 
@@ -131,8 +129,10 @@ impl SchedulerService for MyScheduler {
         request: Request<AbortQueryArgs>,
     ) -> Result<Response<AbortQueryRet>, Status> {
         let query_id = request.into_inner().query_id;
-        lib::scheduler::SCHEDULER_INSTANCE.abort_query(query_id).await;
-        let reply = AbortQueryRet { };
+        lib::scheduler::SCHEDULER_INSTANCE
+            .abort_query(query_id)
+            .await;
+        let reply = AbortQueryRet {};
         Ok(Response::new(reply))
     }
 
@@ -225,7 +225,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for i in 0..1 {
         handles.push(rt.spawn(async move {
-            server().await;
+            server().await.unwrap();
         }));
     }
 

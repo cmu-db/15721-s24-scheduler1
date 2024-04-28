@@ -1,9 +1,8 @@
 use crate::parser::PhysicalPlanFragment;
-use serial_test::serial;
 
-use crate::{debug_println, scheduler};
 use crate::scheduler::SCHEDULER_INSTANCE;
 use crate::scheduler_interface::QueryInfo;
+use crate::{debug_println, scheduler};
 use datafusion::arrow::{array::RecordBatch, datatypes, util::pretty};
 use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
@@ -62,19 +61,16 @@ pub fn scan_from_parquet(file_config: FileScanConfig) -> Arc<dyn ExecutionPlan> 
 // think about parallel reads using partitioned file groups
 pub fn local_file_config(schema: datatypes::SchemaRef, filename: &str) -> FileScanConfig {
     // let pq_file = PartitionedFile::from_path(filename.to_string()).unwrap());
-    let fileconf =  match PartitionedFile::from_path(filename.to_string()) {
-        Ok(pq_file) => {
-            FileScanConfig {
-                object_store_url: object_store::ObjectStoreUrl::parse("file://").unwrap(),
-                file_schema: Arc::clone(&schema),
-                file_groups: vec![vec![pq_file]],
-                statistics: Statistics::new_unknown(&schema),
-                projection: None,
-                limit: None,
-                table_partition_cols: vec![],
-                output_ordering: vec![],
-            }
-
+    let fileconf = match PartitionedFile::from_path(filename.to_string()) {
+        Ok(pq_file) => FileScanConfig {
+            object_store_url: object_store::ObjectStoreUrl::parse("file://").unwrap(),
+            file_schema: Arc::clone(&schema),
+            file_groups: vec![vec![pq_file]],
+            statistics: Statistics::new_unknown(&schema),
+            projection: None,
+            limit: None,
+            table_partition_cols: vec![],
+            output_ordering: vec![],
         },
         Err(e) => {
             debug_println!("file not found with error {}", e);
@@ -88,10 +84,9 @@ pub fn local_file_config(schema: datatypes::SchemaRef, filename: &str) -> FileSc
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }
-        },
+        }
     };
     fileconf
-
 }
 
 pub async fn process_sql_request(
@@ -134,19 +129,15 @@ pub async fn process_physical_fragment(
     let context = ctx.state().task_ctx();
     let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
 
-
     if fragment.aborted {
         SCHEDULER_INSTANCE
             .finish_fragment(
                 fragment_id,
-                scheduler::QueryResult::ParquetExec(local_file_config(
-                    output_schema,
-                    "",
-                )),
+                scheduler::QueryResult::ParquetExec(local_file_config(output_schema, "")),
                 vec![vec![]],
             )
             .await;
-        return
+        return;
     }
 
     spill_records_to_disk(
@@ -201,6 +192,7 @@ mod tests {
     use datafusion::arrow::ipc;
     use datafusion::arrow::util::pretty;
     use datafusion::physical_plan;
+    use serial_test::serial;
 
     #[tokio::test]
     #[serial]
@@ -383,7 +375,15 @@ mod tests {
             let clone_path = abs_path_string.clone();
             let clone_ctx = ctx.clone();
             handles.push(tokio::spawn(async move {
-                spin_up("conc_async",i, clone_ctx, clone_path, std::time::Duration::from_secs(10), std::time::Duration::from_millis(0)).await;
+                spin_up(
+                    "conc_async",
+                    i,
+                    clone_ctx,
+                    clone_path,
+                    std::time::Duration::from_secs(10),
+                    std::time::Duration::from_millis(0),
+                )
+                .await;
             }));
         }
 
@@ -425,7 +425,15 @@ mod tests {
             let clone_path = abs_path_string.clone();
             let clone_ctx = ctx.clone();
             handles.push(tokio::spawn(async move {
-                spin_up("abort",i, clone_ctx, clone_path, std::time::Duration::from_secs(10), std::time::Duration::from_millis(0)).await;
+                spin_up(
+                    "abort",
+                    i,
+                    clone_ctx,
+                    clone_path,
+                    std::time::Duration::from_secs(10),
+                    std::time::Duration::from_millis(0),
+                )
+                .await;
             }));
         }
 
@@ -441,5 +449,4 @@ mod tests {
         }
         Ok(())
     }
-
 }

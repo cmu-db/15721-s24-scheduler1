@@ -11,7 +11,12 @@ use datafusion::{
 use super::debug_println;
 
 use datafusion::physical_plan::ExecutionPlan;
-use std::{collections::{HashMap, HashSet}, future::pending, sync::Arc, time::SystemTime};
+use std::{
+    collections::{HashMap, HashSet},
+    future::pending,
+    sync::Arc,
+    time::SystemTime,
+};
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
 pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, PhysicalPlanFragment>) {
@@ -221,7 +226,6 @@ pub async fn abort_query(query_id: u64) {
             x.1.aborted = true;
         }
     });
-
 }
 
 #[cfg(test)]
@@ -465,5 +469,35 @@ mod tests {
             num_child += 1;
         }
         assert_eq!(num_child, 2);
+    }
+
+    #[tokio::test]
+    async fn abort_test() {
+        let physical_plan = build_basic_physical_plan().await.unwrap();
+        println!("Physical Plan: {:#?}", physical_plan);
+        validate_basic_physical_plan_structure(&physical_plan);
+
+        // Returns a hash map from query fragment ID to physical plan fragment structs
+        let fragment_map = parse_into_fragments_wrapper(physical_plan, 0, 0, true).await;
+
+        add_fragments_to_scheduler(fragment_map).await;
+        assert_eq!(SCHEDULER_INSTANCE.pending_fragments.read().await.len(), 2);
+
+        let mut child_fragment_vec = Vec::<PhysicalPlanFragment>::new();
+
+        let queued_fragment = get_plan_from_queue().await.unwrap();
+        assert!(queued_fragment.root.is_some());
+        child_fragment_vec.push(queued_fragment);
+        abort_query(0).await;
+
+        let mut expected_abort = 0;
+        for (_, value) in SCHEDULER_INSTANCE.all_fragments.read().await.iter() {
+            assert!(value.query_id != 0 || value.query_id == 0 && value.aborted);
+            if value.query_id == 0 && value.aborted {
+                expected_abort += 1;
+            }
+        }
+
+        assert!(expected_abort == 3);
     }
 }

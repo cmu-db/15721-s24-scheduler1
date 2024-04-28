@@ -15,7 +15,6 @@ use lib::integration::{local_file_config, spill_records_to_disk};
 use prost::Message;
 use std::env;
 use std::thread::sleep;
-use tokio::fs;
 
 use lib::debug_println;
 
@@ -50,7 +49,7 @@ async fn process_fragment(get_query_response: GetQueryRet, ctx: &SessionContext)
     let output_schema = process_plan.schema();
 
     if get_query_response.aborted {
-        return local_file_config(output_schema, "")
+        return local_file_config(output_schema, "");
     }
 
     let context = ctx.state().task_ctx();
@@ -109,7 +108,6 @@ async fn initialize(port: i32, delete_intermediate: bool) {
                 match client.query_execution_done(finished_request).await {
                     Err(e) => {
                         debug_println!("Finished reply unsuccessful: {:?}", e);
-                        //client.kill_query_execution(); TODO
                     }
                     Ok(finished_response) => {
                         debug_println!("reply for finishing query frag received");
