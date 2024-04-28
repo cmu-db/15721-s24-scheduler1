@@ -1,5 +1,5 @@
 use crate::parser::{parse_into_fragments_wrapper, PhysicalPlanFragment, QueryFragmentId};
-use crate::queue::{add_fragments_to_scheduler, finish_fragment};
+use crate::queue::{add_fragments_to_scheduler, finish_fragment, abort_query};
 use crate::scheduler_interface::*;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::FileScanConfig;
@@ -95,6 +95,10 @@ impl Scheduler {
 
     pub fn query_execution_done(&self, _fragment_id: i32, _query_status: QueryStatus) {
         unimplemented!()
+    }
+
+    pub async fn abort_query(&self, query_id: i32) {
+        abort_query(query_id.try_into().unwrap()).await;
     }
 
     pub fn parse_physical_plan(&self, _physical_plan: &dyn ExecutionPlan) {}

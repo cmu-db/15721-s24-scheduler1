@@ -43,6 +43,7 @@ impl SchedulerService for MyScheduler {
                             fragment_id: i32::try_from(p.fragment_id).unwrap(),
                             physical_plan: p_bytes.to_vec(),
                             root: p.parent_fragments.is_empty(),
+                            aborted: p.aborted,
                         };
                         Ok(Response::new(reply))
                     }
@@ -54,6 +55,7 @@ impl SchedulerService for MyScheduler {
                             fragment_id: -1,
                             physical_plan: vec![],
                             root: true, // setting this to true frees the CLI on the tokio channel, will do for now
+                            aborted: false,
                         };
                         Ok(Response::new(reply))
                     }
@@ -65,6 +67,7 @@ impl SchedulerService for MyScheduler {
                     fragment_id: -1,
                     physical_plan: vec![],
                     root: false,
+                    aborted: false,
                 };
                 Ok(Response::new(reply))
             }
@@ -119,8 +122,17 @@ impl SchedulerService for MyScheduler {
         let request_content = request.into_inner();
         let _query_id = request_content.query_id;
         let query_status = 1; // hardcode for now
-
         let reply = QueryJobStatusRet { query_status };
+        Ok(Response::new(reply))
+    }
+
+    async fn abort_query(
+        &self,
+        request: Request<AbortQueryArgs>,
+    ) -> Result<Response<AbortQueryRet>, Status> {
+        let query_id = request.into_inner().query_id;
+        lib::scheduler::SCHEDULER_INSTANCE.abort_query(query_id).await;
+        let reply = AbortQueryRet { };
         Ok(Response::new(reply))
     }
 

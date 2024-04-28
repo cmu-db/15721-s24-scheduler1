@@ -1,6 +1,7 @@
 use crate::parser::PhysicalPlanFragment;
+use serial_test::serial;
 
-use crate::scheduler;
+use crate::{debug_println, scheduler};
 use crate::scheduler::SCHEDULER_INSTANCE;
 use crate::scheduler_interface::QueryInfo;
 use datafusion::arrow::{array::RecordBatch, datatypes, util::pretty};
@@ -60,18 +61,37 @@ pub fn scan_from_parquet(file_config: FileScanConfig) -> Arc<dyn ExecutionPlan> 
 
 // think about parallel reads using partitioned file groups
 pub fn local_file_config(schema: datatypes::SchemaRef, filename: &str) -> FileScanConfig {
-    let pq_file = PartitionedFile::from_path(filename.to_string()).unwrap();
+    // let pq_file = PartitionedFile::from_path(filename.to_string()).unwrap());
+    let fileconf =  match PartitionedFile::from_path(filename.to_string()) {
+        Ok(pq_file) => {
+            FileScanConfig {
+                object_store_url: object_store::ObjectStoreUrl::parse("file://").unwrap(),
+                file_schema: Arc::clone(&schema),
+                file_groups: vec![vec![pq_file]],
+                statistics: Statistics::new_unknown(&schema),
+                projection: None,
+                limit: None,
+                table_partition_cols: vec![],
+                output_ordering: vec![],
+            }
 
-    FileScanConfig {
-        object_store_url: object_store::ObjectStoreUrl::parse("file://").unwrap(),
-        file_schema: Arc::clone(&schema),
-        file_groups: vec![vec![pq_file]],
-        statistics: Statistics::new_unknown(&schema),
-        projection: None,
-        limit: None,
-        table_partition_cols: vec![],
-        output_ordering: vec![],
-    }
+        },
+        Err(e) => {
+            debug_println!("file not found with error {}", e);
+            FileScanConfig {
+                object_store_url: object_store::ObjectStoreUrl::parse("file://").unwrap(),
+                file_schema: Arc::clone(&schema),
+                file_groups: vec![vec![PartitionedFile::new("", 0)]],
+                statistics: Statistics::new_unknown(&schema),
+                projection: None,
+                limit: None,
+                table_partition_cols: vec![],
+                output_ordering: vec![],
+            }
+        },
+    };
+    fileconf
+
 }
 
 pub async fn process_sql_request(
@@ -100,6 +120,7 @@ pub async fn process_physical_fragment(
     ctx: &SessionContext,
     abs_path_str: &str,
     id: u64,
+    test: &str,
 ) {
     let query_id = fragment.query_id;
     let fragment_id = fragment.fragment_id;
@@ -109,9 +130,24 @@ pub async fn process_physical_fragment(
     let process_plan = fragment.root.unwrap();
     let output_schema = process_plan.schema();
     let intermediate_output =
-        format!("{abs_path_str}/src/query_{query_id}_fragment_{fragment_id}_pid_{id}.parquet");
+        format!("{abs_path_str}/src/example_data/{test}_query_{query_id}_fragment_{fragment_id}_pid_{id}.parquet");
     let context = ctx.state().task_ctx();
     let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
+
+
+    if fragment.aborted {
+        SCHEDULER_INSTANCE
+            .finish_fragment(
+                fragment_id,
+                scheduler::QueryResult::ParquetExec(local_file_config(
+                    output_schema,
+                    "",
+                )),
+                vec![vec![]],
+            )
+            .await;
+        return
+    }
 
     spill_records_to_disk(
         &intermediate_output,
@@ -134,15 +170,18 @@ pub async fn process_physical_fragment(
 }
 
 pub async fn spin_up(
+    test: &str,
     id: u64,
     ctx: SessionContext,
     abs_path_str: String,
     live_for: std::time::Duration,
+    pause_between_fragment: std::time::Duration,
 ) {
     let born = std::time::SystemTime::now();
     loop {
+        std::thread::sleep(pause_between_fragment);
         if let Some(fragment) = SCHEDULER_INSTANCE.get_plan_from_queue().await {
-            process_physical_fragment(fragment, &ctx, &abs_path_str, id).await;
+            process_physical_fragment(fragment, &ctx, &abs_path_str, id, test).await;
         } else {
             if std::time::SystemTime::now().duration_since(born).unwrap() > live_for {
                 break;
@@ -164,6 +203,7 @@ mod tests {
     use datafusion::physical_plan;
 
     #[tokio::test]
+    #[serial]
     async fn spill_test() -> Result<(), Box<dyn error::Error>> {
         let abs_path = std::fs::canonicalize(".")?;
         let abs_path_str = abs_path.to_str().unwrap();
@@ -235,7 +275,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[serial]
     async fn csv_query() -> Result<(), Box<dyn error::Error>> {
         let abs_path = std::fs::canonicalize(".")?;
         let abs_path_str = abs_path.to_str().unwrap();
@@ -312,7 +352,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn csv_query_queue_api_multi_async() -> Result<(), Box<dyn error::Error>> {
+    #[serial]
+    async fn csv_conc_async() -> Result<(), Box<dyn error::Error>> {
         let abs_path = std::fs::canonicalize(".")?;
         let abs_path_str = abs_path.to_str().unwrap();
         let abs_path_string = abs_path_str.to_string();
@@ -342,7 +383,7 @@ mod tests {
             let clone_path = abs_path_string.clone();
             let clone_ctx = ctx.clone();
             handles.push(tokio::spawn(async move {
-                spin_up(i, clone_ctx, clone_path, std::time::Duration::from_secs(10)).await;
+                spin_up("conc_async",i, clone_ctx, clone_path, std::time::Duration::from_secs(10), std::time::Duration::from_millis(0)).await;
             }));
         }
 
@@ -351,4 +392,54 @@ mod tests {
         }
         Ok(())
     }
+
+    #[tokio::test]
+    #[serial]
+    async fn csv_abort() -> Result<(), Box<dyn error::Error>> {
+        let abs_path = std::fs::canonicalize(".")?;
+        let abs_path_str = abs_path.to_str().unwrap();
+        let abs_path_string = abs_path_str.to_string();
+
+        // register the table
+        let ctx = SessionContext::new();
+        ctx.register_csv(
+            "orders",
+            "src/example_data/orders.csv",
+            CsvReadOptions::new(),
+        )
+        .await?;
+        ctx.register_csv(
+            "prices",
+            "src/example_data/prices.csv",
+            CsvReadOptions::new(),
+        )
+        .await?;
+
+        // create plans to run a SQL query
+        for i in 1..11 {
+            process_sql_request(&ctx, i).await?;
+        }
+
+        let mut handles = Vec::new();
+        for i in 0..3 {
+            let clone_path = abs_path_string.clone();
+            let clone_ctx = ctx.clone();
+            handles.push(tokio::spawn(async move {
+                spin_up("abort",i, clone_ctx, clone_path, std::time::Duration::from_secs(10), std::time::Duration::from_millis(0)).await;
+            }));
+        }
+
+        SCHEDULER_INSTANCE.abort_query(1).await;
+        SCHEDULER_INSTANCE.abort_query(3).await;
+        SCHEDULER_INSTANCE.abort_query(5).await;
+        SCHEDULER_INSTANCE.abort_query(7).await;
+        SCHEDULER_INSTANCE.abort_query(9).await;
+        SCHEDULER_INSTANCE.abort_query(12).await; // should not crash
+
+        for handle in handles {
+            let _ = handle.await;
+        }
+        Ok(())
+    }
+
 }

@@ -39,18 +39,22 @@ impl ExecutorService for MyExecutor {
 async fn process_fragment(get_query_response: GetQueryRet, ctx: &SessionContext) -> FileScanConfig {
     let wd = env::current_dir().unwrap();
     let wd_str = wd.to_str().unwrap();
-
     let query_id = get_query_response.query_id;
     let fragment_id = get_query_response.fragment_id;
-    let process_plan = physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
-
-    let output_schema = process_plan.schema();
-    let context = ctx.state().task_ctx();
-    let output_stream = physical_plan::execute_stream(process_plan.clone(), context).unwrap();
 
     let intermediate_output = format!(
         "/{wd_str}/scheduler/src/example_data/query_{query_id}_fragment_{fragment_id}.parquet"
     );
+
+    let process_plan = physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
+    let output_schema = process_plan.schema();
+
+    if get_query_response.aborted {
+        return local_file_config(output_schema, "")
+    }
+
+    let context = ctx.state().task_ctx();
+    let output_stream = physical_plan::execute_stream(process_plan.clone(), context).unwrap();
 
     spill_records_to_disk(
         &intermediate_output,
@@ -153,7 +157,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let num_workers: i32 = args[1].parse().unwrap();
 
-    let delete_intermediate: bool = args[2].parse().unwrap_or_default();
+    let delete_intermediate: bool = if args.len() > 2 {
+        args[2].parse().unwrap_or_default()
+    } else {
+        false
+    };
 
     let mut handles = Vec::new();
     let base_port = 5555;

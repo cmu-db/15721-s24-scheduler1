@@ -11,7 +11,7 @@ use datafusion::{
 use super::debug_println;
 
 use datafusion::physical_plan::ExecutionPlan;
-use std::{collections::HashMap, collections::HashSet, sync::Arc, time::SystemTime};
+use std::{collections::{HashMap, HashSet}, future::pending, sync::Arc, time::SystemTime};
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
 pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, PhysicalPlanFragment>) {
@@ -151,9 +151,9 @@ pub async fn finish_fragment(
                 intermediate_file_pin.remove(&file);
                 to_delete.push(file);
             }
-            Some(k) => {
-                debug_assert!(*k > 1);
-                *k -= 1;
+            Some(pin_count) => {
+                debug_assert!(*pin_count > 1);
+                *pin_count -= 1;
             }
         }
     }
@@ -211,6 +211,17 @@ fn create_parquet_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPl
         None,
         TableParquetOptions::default(),
     ))
+}
+
+pub async fn abort_query(query_id: u64) {
+    let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
+
+    all_fragments.iter_mut().for_each(|x| {
+        if x.1.query_id == query_id {
+            x.1.aborted = true;
+        }
+    });
+
 }
 
 #[cfg(test)]
@@ -316,6 +327,7 @@ mod tests {
             enqueued_time: None,
             fragment_cost: None,
             intermediate_files: HashSet::<String>::new(),
+            aborted: false,
         };
         let mut map: HashMap<QueryFragmentId, PhysicalPlanFragment> = HashMap::new();
         map.insert(0, fragment);
