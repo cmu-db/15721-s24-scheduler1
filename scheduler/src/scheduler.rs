@@ -14,21 +14,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
-use super::debug_println;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
-
-#[derive(Debug)]
-struct ExecutorHandle {
-    port: i32,
-}
 
 #[derive(Debug)]
 pub struct Scheduler {
     pub all_fragments: RwLock<HashMap<QueryFragmentId, PhysicalPlanFragment>>,
     pub pending_fragments: RwLock<Vec<QueryFragmentId>>,
     pub job_status: RwLock<HashMap<i32, Sender<Vec<u8>>>>,
-    executors: RwLock<Vec<ExecutorHandle>>,
 }
 
 pub enum PipelineBreakers {
@@ -95,11 +88,6 @@ impl Scheduler {
 
     pub fn parse_physical_plan(&self, _physical_plan: &dyn ExecutionPlan) {}
 
-    pub async fn register_executor(&self, port: i32) {
-        self.executors.write().await.push(ExecutorHandle { port });
-        debug_println!("Executor registered; port={port}");
-    }
-
     pub async fn get_plan_from_queue(&self) -> Option<PhysicalPlanFragment> {
         crate::queue::get_plan_from_queue().await
     }
@@ -110,6 +98,5 @@ lazy_static! {
         all_fragments: RwLock::new(HashMap::new()),
         pending_fragments: RwLock::new(vec![]),
         job_status: RwLock::new(HashMap::<i32, Sender<Vec<u8>>>::new()),
-        executors: RwLock::new(vec![]),
     };
 }

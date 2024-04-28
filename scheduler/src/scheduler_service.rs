@@ -163,19 +163,6 @@ impl SchedulerService for MyScheduler {
         let reply = QueryExecutionDoneRet {};
         Ok(Response::new(reply))
     }
-
-    async fn register_executor(
-        &self,
-        request: Request<RegisterExecutorArgs>,
-    ) -> Result<Response<RegisterExecutorRet>, Status> {
-        let request_content = request.into_inner();
-        let port = request_content.port;
-
-        SCHEDULER_INSTANCE.register_executor(port).await;
-
-        let reply = RegisterExecutorRet {};
-        Ok(Response::new(reply))
-    }
 }
 
 #[tokio::main]

@@ -1,16 +1,16 @@
-use datafusion_proto::protobuf::FileScanExecConf;
 use chronos::integration::scan_from_parquet;
 use chronos::scheduler_interface::scheduler_service_client::SchedulerServiceClient;
+use datafusion_proto::protobuf::FileScanExecConf;
 
 use bytes::IntoBuf;
+use chronos::debug_println;
+use chronos::scheduler_interface::{QueryInfo, ScheduleQueryArgs};
 use datafusion::arrow::{array::RecordBatch, util::pretty};
 use datafusion::physical_plan;
 use datafusion::prelude::*;
 use datafusion_proto::bytes::physical_plan_to_bytes;
 use datafusion_proto::physical_plan::from_proto;
 use futures::stream::TryStreamExt;
-use chronos::debug_println;
-use chronos::scheduler_interface::{QueryInfo, ScheduleQueryArgs};
 use prost::Message;
 use std::io::{self, Write};
 

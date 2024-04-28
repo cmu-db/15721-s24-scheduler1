@@ -83,7 +83,7 @@ message QueryExecutionDoneArgs {
 
     // The path info for intermediate files
     bytes file_scan_config = 3;
-    
+
     // Whether the file is root
     bool root = 4;
 
@@ -92,14 +92,6 @@ message QueryExecutionDoneArgs {
 
 // Information returned from the QueryExecutionDone RPC.
 message QueryExecutionDoneRet {
-
-}
-
-message RegisterExecutorArgs {
-    int32 port = 1;
-}
-
-message RegisterExecutorRet {
 
 }
 
@@ -126,8 +118,6 @@ service SchedulerService {
 
     // Used by the optimizer to query the status of a job.
     rpc QueryJobStatus(QueryJobStatusArgs) returns (QueryJobStatusRet);
-
-    rpc RegisterExecutor(RegisterExecutorArgs) returns (RegisterExecutorRet);
 
     rpc GetQuery(GetQueryArgs) returns (GetQueryRet);
 
