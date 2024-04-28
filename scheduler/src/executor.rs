@@ -13,9 +13,9 @@ use core::time;
 use datafusion::prelude::*;
 use lib::integration::{local_file_config, spill_records_to_disk};
 use prost::Message;
-use std::thread::sleep;
-
 use std::env;
+use std::thread::sleep;
+use tokio::fs;
 
 use lib::debug_println;
 
@@ -43,12 +43,13 @@ async fn process_fragment(get_query_response: GetQueryRet, ctx: &SessionContext)
     let query_id = get_query_response.query_id;
     let fragment_id = get_query_response.fragment_id;
     let process_plan = physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
+
     let output_schema = process_plan.schema();
     let context = ctx.state().task_ctx();
-    let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
+    let output_stream = physical_plan::execute_stream(process_plan.clone(), context).unwrap();
 
     let intermediate_output = format!(
-        "{wd_str}/scheduler/src/example_data/query_{query_id}_fragment_{fragment_id}.parquet"
+        "/{wd_str}/scheduler/src/example_data/query_{query_id}_fragment_{fragment_id}.parquet"
     );
 
     spill_records_to_disk(
@@ -59,10 +60,11 @@ async fn process_fragment(get_query_response: GetQueryRet, ctx: &SessionContext)
     )
     .await
     .unwrap();
+
     local_file_config(output_schema, intermediate_output.as_str())
 }
 
-async fn initialize(port: i32) {
+async fn initialize(port: i32, delete_intermediate: bool) {
     let scheduler_service_port = env::var("SCHEDULER_PORT").unwrap_or_else(|_error| {
         panic!("Scheduler port environment variable not set");
     });
@@ -105,9 +107,25 @@ async fn initialize(port: i32) {
                         debug_println!("Finished reply unsuccessful: {:?}", e);
                         //client.kill_query_execution(); TODO
                     }
-                    Ok(_finished_response) => {
+                    Ok(finished_response) => {
                         debug_println!("reply for finishing query frag received");
-                        debug_println!("response : {:?}", _finished_response);
+                        debug_println!("response : {:?}", finished_response);
+                        if delete_intermediate {
+                            let mut response = finished_response.into_inner();
+
+                            for file in &mut response.intermediate_files {
+                                file.insert(0, '/');
+                            }
+
+                            let handles = response
+                                .intermediate_files
+                                .into_iter()
+                                .map(tokio::fs::remove_file)
+                                .map(tokio::spawn)
+                                .collect::<Vec<_>>();
+
+                            let _results = futures::future::join_all(handles).await;
+                        }
                     }
                 }
             }
@@ -135,6 +153,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let num_workers: i32 = args[1].parse().unwrap();
 
+    let delete_intermediate: bool = args[2].parse().unwrap_or_default();
+
     let mut handles = Vec::new();
     let base_port = 5555;
 
@@ -142,7 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for i in 0..num_workers {
         handles.push(tokio::spawn(async move {
-            initialize(base_port + i).await;
+            initialize(base_port + i, delete_intermediate).await;
         }));
     }
 
@@ -151,4 +171,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[tokio::test]
+    #[ignore] // add end to end later
+    async fn end2end() -> Result<(), Box<dyn std::error::Error>> {
+        std::process::Command::new("cargo run")
+            .env("SCHEDULER_PORT", "50051")
+            .arg("--bin")
+            .arg("scheduler-api-server")
+            .output()?;
+
+        std::thread::sleep(std::time::Duration::from_millis(2000));
+
+        Ok(())
+    }
 }
