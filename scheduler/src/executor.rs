@@ -178,12 +178,12 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // add end to end later
-    async fn end2end () -> Result<(), Box<dyn std::error::Error>> {
+    async fn end2end() -> Result<(), Box<dyn std::error::Error>> {
         std::process::Command::new("cargo run")
-        .env("SCHEDULER_PORT", "50051")
-        .arg("--bin")
-        .arg("scheduler-api-server")
-        .output()?;
+            .env("SCHEDULER_PORT", "50051")
+            .arg("--bin")
+            .arg("scheduler-api-server")
+            .output()?;
 
         std::thread::sleep(std::time::Duration::from_millis(2000));
 
