@@ -8,10 +8,10 @@ use datafusion::execution::context::SessionContext;
 use datafusion_proto::physical_plan::from_proto;
 use datafusion_proto::protobuf::FileScanExecConf;
 
-use lib::scheduler::SCHEDULER_INSTANCE;
-use lib::scheduler_interface::scheduler_service_server::SchedulerService;
-use lib::scheduler_interface::scheduler_service_server::SchedulerServiceServer;
-use lib::scheduler_interface::*;
+use chronos::scheduler::SCHEDULER_INSTANCE;
+use chronos::scheduler_interface::scheduler_service_server::SchedulerService;
+use chronos::scheduler_interface::scheduler_service_server::SchedulerServiceServer;
+use chronos::scheduler_interface::*;
 
 use bytes::IntoBuf;
 use tokio::sync::mpsc;
@@ -25,7 +25,7 @@ impl SchedulerService for MyScheduler {
         &self,
         _request: Request<GetQueryArgs>,
     ) -> Result<Response<GetQueryRet>, Status> {
-        let plan = lib::scheduler::SCHEDULER_INSTANCE
+        let plan = chronos::scheduler::SCHEDULER_INSTANCE
             .get_plan_from_queue()
             .await;
 
@@ -45,7 +45,7 @@ impl SchedulerService for MyScheduler {
                     }
                     Err(e) => {
                         println!("{:?}", e);
-                        // lib::queue::kill_query(p.query_id); TODO
+                        // chronos::queue::kill_query(p.query_id); TODO
                         let reply = GetQueryRet {
                             query_id: -1,
                             fragment_id: -1,
@@ -86,7 +86,7 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
 
-        let sched_info = lib::scheduler::SCHEDULER_INSTANCE
+        let sched_info = chronos::scheduler::SCHEDULER_INSTANCE
             .schedule_query(physical_plan, metadata.unwrap(), false)
             .await;
 
@@ -141,10 +141,10 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
         // let scheduler = SCHEDULER_INSTANCE.lock().await;
-        lib::scheduler::SCHEDULER_INSTANCE
+        chronos::scheduler::SCHEDULER_INSTANCE
             .finish_fragment(
                 fragment_id.try_into().unwrap(),
-                lib::scheduler::QueryResult::ParquetExec(file_scan_conf),
+                chronos::scheduler::QueryResult::ParquetExec(file_scan_conf),
             )
             .await;
 

@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "lib"
+name = "chronos"
 path = "src/lib.rs"
 
 [[bin]]
 name = "scheduler-api-server"
-path = "src/proto_server.rs"
+path = "src/scheduler_service.rs"
 
 [[bin]]
 name = "executor"

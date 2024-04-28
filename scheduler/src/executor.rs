@@ -1,23 +1,23 @@
 use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion_proto::bytes::physical_plan_from_bytes;
 use datafusion_proto::protobuf::FileScanExecConf;
-use lib::executor_interface::executor_service_server::ExecutorService;
-use lib::executor_interface::{ExecuteQueryArgs, ExecuteQueryRet};
-use lib::scheduler_interface::scheduler_service_client::SchedulerServiceClient;
+use chronos::executor_interface::executor_service_server::ExecutorService;
+use chronos::executor_interface::{ExecuteQueryArgs, ExecuteQueryRet};
+use chronos::scheduler_interface::scheduler_service_client::SchedulerServiceClient;
 
-use lib::scheduler_interface::{GetQueryArgs, GetQueryRet, QueryExecutionDoneArgs};
+use chronos::scheduler_interface::{GetQueryArgs, GetQueryRet, QueryExecutionDoneArgs};
 use tokio::runtime::Handle;
 use tonic::{Code, Request, Response, Status};
 
 use core::time;
 use datafusion::prelude::*;
-use lib::integration::{local_file_config, spill_records_to_disk};
+use chronos::integration::{local_file_config, spill_records_to_disk};
 use prost::Message;
 use std::thread::sleep;
 
 use std::env;
 
-use lib::debug_println;
+use chronos::debug_println;
 
 #[derive(Debug, Default)]
 pub struct MyExecutor {}

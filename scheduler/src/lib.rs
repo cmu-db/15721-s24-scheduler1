@@ -1,3 +1,8 @@
+//! A scheduler for databases.
+//!
+//! Provides inter-query and intra-query parallelism by splitting up queries
+//! into fragments.
+
 pub mod integration;
 mod parser;
 pub mod queue;
