@@ -13,9 +13,9 @@ use core::time;
 use datafusion::prelude::*;
 use lib::integration::{local_file_config, spill_records_to_disk};
 use prost::Message;
+use std::env;
 use std::thread::sleep;
 use tokio::fs;
-use std::env;
 
 use lib::debug_println;
 
@@ -117,15 +117,15 @@ async fn initialize(port: i32, delete_intermediate: bool) {
                                 file.insert(0, '/');
                             }
 
-                            let handles = response.intermediate_files
-                            .into_iter()
-                            .map(tokio::fs::remove_file)
-                            .map(tokio::spawn)
-                            .collect::<Vec<_>>();
-                            
-                            let _results = futures::future::join_all(handles).await;
+                            let handles = response
+                                .intermediate_files
+                                .into_iter()
+                                .map(tokio::fs::remove_file)
+                                .map(tokio::spawn)
+                                .collect::<Vec<_>>();
 
-                            }
+                            let _results = futures::future::join_all(handles).await;
+                        }
                     }
                 }
             }
@@ -185,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //         .output()?;
 
 //         std::thread::sleep(std::time::Duration::from_millis(2000));
-    
+
 //         Ok(())
 //     }
 // }

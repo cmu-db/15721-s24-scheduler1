@@ -11,7 +11,7 @@ use datafusion::{
 use super::debug_println;
 
 use datafusion::physical_plan::ExecutionPlan;
-use std::{collections::HashMap, sync::Arc, time::SystemTime, collections::HashSet};
+use std::{collections::HashMap, collections::HashSet, sync::Arc, time::SystemTime};
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
 pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, PhysicalPlanFragment>) {
@@ -112,7 +112,11 @@ pub fn update_plan_parent(
     root.with_new_children(new_children).unwrap()
 }
 
-pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result: QueryResult, intermediate_files: Vec<Vec<PartitionedFile>>) -> Vec<String> {
+pub async fn finish_fragment(
+    child_fragment_id: QueryFragmentId,
+    fragment_result: QueryResult,
+    intermediate_files: Vec<Vec<PartitionedFile>>,
+) -> Vec<String> {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
     let mut intermediate_file_pin = SCHEDULER_INSTANCE.intermediate_files.write().await;
@@ -140,17 +144,18 @@ pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result
 
     for file in child_fragment_intermediate_files {
         match intermediate_file_pin.get_mut(&file) {
-            None => debug_println!("This is a intermediate file that wasn't recorded or undercounted"),
+            None => {
+                debug_println!("This is a intermediate file that wasn't recorded or undercounted")
+            }
             Some(1) => {
                 intermediate_file_pin.remove(&file);
                 to_delete.push(file);
-            },
+            }
             Some(k) => {
                 debug_assert!(*k > 1);
                 *k -= 1;
             }
         }
-
     }
 
     let mut new_ids_to_push = vec![];
@@ -168,8 +173,12 @@ pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result
 
         for partition in intermediate_files.clone().into_iter() {
             for file in partition.clone().into_iter() {
-                *intermediate_file_pin.entry(file.path().to_string()).or_insert(0) += 1;
-                parent_fragment.intermediate_files.insert(file.path().to_string());
+                *intermediate_file_pin
+                    .entry(file.path().to_string())
+                    .or_insert(0) += 1;
+                parent_fragment
+                    .intermediate_files
+                    .insert(file.path().to_string());
             }
         }
 
