@@ -19,4 +19,3 @@ Cargo.lock
 .vscode/
 scheduler/.DS_Store
 scheduler/src/.DS_Store
-*.parquet
