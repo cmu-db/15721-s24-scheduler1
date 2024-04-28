@@ -1,7 +1,6 @@
 use crate::parser::{parse_into_fragments_wrapper, PhysicalPlanFragment, QueryFragmentId};
 use crate::queue::{add_fragments_to_scheduler, finish_fragment};
 use crate::scheduler_interface::*;
-use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion::physical_plan::joins::HashBuildResult;
 use datafusion::physical_plan::ExecutionPlan;
@@ -11,7 +10,6 @@ use lazy_static::lazy_static;
 use tokio::sync::RwLock;
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
@@ -30,7 +28,6 @@ pub struct Scheduler {
     pub all_fragments: RwLock<HashMap<QueryFragmentId, PhysicalPlanFragment>>,
     pub pending_fragments: RwLock<Vec<QueryFragmentId>>,
     pub job_status: RwLock<HashMap<i32, Sender<Vec<u8>>>>,
-    pub intermediate_files: RwLock<HashMap<String, i32>>,
     executors: RwLock<Vec<ExecutorHandle>>,
 }
 
@@ -84,9 +81,8 @@ impl Scheduler {
         &self,
         child_fragment_id: QueryFragmentId,
         fragment_result: QueryResult,
-        intermediate_files: Vec<Vec<PartitionedFile>>,
-    ) -> Vec<String> {
-        finish_fragment(child_fragment_id, fragment_result, intermediate_files).await
+    ) {
+        finish_fragment(child_fragment_id, fragment_result).await
     }
 
     pub fn query_job_status(&self, _query_id: i32) -> QueryStatus {
@@ -115,6 +111,5 @@ lazy_static! {
         pending_fragments: RwLock::new(vec![]),
         job_status: RwLock::new(HashMap::<i32, Sender<Vec<u8>>>::new()),
         executors: RwLock::new(vec![]),
-        intermediate_files: RwLock::new(HashMap::<String, i32>::new()),
     };
 }
