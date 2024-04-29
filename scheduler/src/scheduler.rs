@@ -65,11 +65,17 @@ impl Scheduler {
     pub async fn schedule_query(
         &self,
         physical_plan: Arc<dyn ExecutionPlan>,
-        _query_info: QueryInfo,
+        query_info: QueryInfo,
         pipelined: bool,
     ) -> ScheduleResult {
         let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, pipelined).await;
+        let fragments = parse_into_fragments_wrapper(
+            physical_plan,
+            query_id,
+            query_info.priority.into(),
+            pipelined,
+        )
+        .await;
         add_fragments_to_scheduler(fragments).await;
         ScheduleResult {
             query_id: query_id.try_into().unwrap(),

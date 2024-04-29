@@ -1,4 +1,6 @@
 use prost::Message;
+
+use tokio::runtime::Handle;
 use tonic::{transport::Server, Code, Request, Response, Status};
 
 use datafusion_proto::bytes::{physical_plan_from_bytes, physical_plan_to_bytes};
@@ -178,8 +180,7 @@ impl SchedulerService for MyScheduler {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn server() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse()?;
     let scheduler = MyScheduler::default();
 
@@ -189,6 +190,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(SchedulerServiceServer::new(scheduler))
         .serve(addr)
         .await?;
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut handles = Vec::new();
+    let _handle = Handle::current;
+
+    use tokio::runtime;
+
+    let rt = runtime::Builder::new_multi_thread()
+        .thread_stack_size(10 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    for _i in 0..1 {
+        handles.push(rt.spawn(async move {
+            let _ = server().await;
+        }));
+    }
+
+    for handle in handles {
+        let _ = handle.await;
+    }
 
     Ok(())
 }

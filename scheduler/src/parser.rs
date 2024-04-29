@@ -76,7 +76,7 @@ async fn populate_fragment_cost(fragment: &mut PhysicalPlanFragment) {
         }
     }
     if cur_cost != 0 {
-        fragment.fragment_cost = Some(cur_cost);
+        fragment.fragment_cost = Some(cur_cost.ilog2() as usize);
     }
 }
 

@@ -21,6 +21,10 @@ path = "src/executor.rs"
 name = "cli"
 path = "src/cli.rs"
 
+[[bin]]
+name = "bench"
+path = "src/bench.rs"
+
 [dependencies]
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
