@@ -81,7 +81,7 @@ async fn populate_fragment_cost(fragment: &mut QueryFragment) {
     }
 }
 
-// Wrapper function for parsing into fragments
+/// Parse `root` into query fragments.
 pub async fn parse_into_fragments_wrapper(
     root: Arc<dyn ExecutionPlan>,
     query_id: u64,
@@ -348,8 +348,8 @@ async fn create_build_fragment(
     return Arc::new(new_root.unwrap());
 }
 
-// Dummy Scan nodes will created using [`plan`], attached to its parents.
-// Update these dummy nodes as results are produced by the execution team.
+/// Dummy Scan nodes will created using [`plan`], attached to its parents.
+/// Update these dummy nodes as results are produced by the execution team.
 async fn create_dummy_scans(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
     let empty_table = Arc::new(EmptyTable::new(plan.schema()));
     let table_source = Arc::new(DefaultTableSource::new(empty_table));
