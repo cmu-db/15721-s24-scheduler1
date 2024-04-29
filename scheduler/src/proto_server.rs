@@ -180,7 +180,8 @@ impl SchedulerService for MyScheduler {
     }
 }
 
-async fn server() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse()?;
     let scheduler = MyScheduler::default();
 
