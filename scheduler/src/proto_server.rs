@@ -155,12 +155,11 @@ impl SchedulerService for MyScheduler {
             let status = Status::new(Code::InvalidArgument, "Query status not specified");
             return Err(status);
         }
-
-        let to_delete = lib::scheduler::SCHEDULER_INSTANCE
+        // let scheduler = SCHEDULER_INSTANCE.lock().await;
+        lib::scheduler::SCHEDULER_INSTANCE
             .finish_fragment(
                 fragment_id.try_into().unwrap(),
-                lib::scheduler::QueryResult::ParquetExec(file_scan_conf.clone()),
-                file_scan_conf.file_groups,
+                lib::scheduler::QueryResult::ParquetExec(file_scan_conf),
             )
             .await;
 
@@ -176,9 +175,7 @@ impl SchedulerService for MyScheduler {
             }
         }
 
-        let reply = QueryExecutionDoneRet {
-            intermediate_files: to_delete,
-        };
+        let reply = QueryExecutionDoneRet {};
         Ok(Response::new(reply))
     }
 
@@ -196,7 +193,8 @@ impl SchedulerService for MyScheduler {
     }
 }
 
-async fn server() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse()?;
     let scheduler = MyScheduler::default();
 

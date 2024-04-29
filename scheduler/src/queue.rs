@@ -2,7 +2,7 @@ use crate::{
     parser::{PhysicalPlanFragment, QueryFragmentId},
     scheduler::{QueryResult, SCHEDULER_INSTANCE},
 };
-use datafusion::{config::TableParquetOptions, datasource::listing::PartitionedFile};
+use datafusion::config::TableParquetOptions;
 use datafusion::{
     datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
     physical_plan::joins::HashBuildExec,
@@ -117,14 +117,9 @@ pub fn update_plan_parent(
     root.with_new_children(new_children).unwrap()
 }
 
-pub async fn finish_fragment(
-    child_fragment_id: QueryFragmentId,
-    fragment_result: QueryResult,
-    intermediate_files: Vec<Vec<PartitionedFile>>,
-) -> Vec<String> {
+pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result: QueryResult) {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
-    let mut intermediate_file_pin = SCHEDULER_INSTANCE.intermediate_files.write().await;
     let parent_fragment_ids = all_fragments
         .get(&child_fragment_id)
         .unwrap()
@@ -176,17 +171,6 @@ pub async fn finish_fragment(
 
         parent_fragment.root = Some(new_root);
 
-        for partition in intermediate_files.clone().into_iter() {
-            for file in partition.clone().into_iter() {
-                *intermediate_file_pin
-                    .entry(file.path().to_string())
-                    .or_insert(0) += 1;
-                parent_fragment
-                    .intermediate_files
-                    .insert(file.path().to_string());
-            }
-        }
-
         parent_fragment
             .child_fragments
             .retain(|x| *x != child_fragment_id);
@@ -201,8 +185,6 @@ pub async fn finish_fragment(
         "Updated finished fragments, {} left available to be executed in pending queue",
         pending_fragments.len()
     );
-
-    to_delete
 }
 
 fn create_arrow_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPlan> {
@@ -436,7 +418,6 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
-            vec![vec![]],
         )
         .await;
 
@@ -455,7 +436,6 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
-            vec![vec![]],
         )
         .await;
 
