@@ -105,24 +105,36 @@ pub async fn parse_into_fragments_wrapper(
     };
     let path = Vec::<u32>::new();
     output.insert(root_fragment.fragment_id, root_fragment);
-    let new_root = if pipelined {
-        parse_into_fragments(root, fragment_id, &mut output, query_id, path, priority).await
-    } else {
-        parse_into_fragments_naive(root, fragment_id, &mut output, query_id, path, priority).await
-    };
+    let new_root = parse_into_fragments(
+        root,
+        fragment_id,
+        &mut output,
+        query_id,
+        path,
+        priority,
+        pipelined,
+    )
+    .await;
     output.get_mut(&fragment_id).unwrap().root = Some(new_root);
     populate_fragment_cost(output.get_mut(&fragment_id).unwrap()).await;
 
     output
 }
 
-// Turn this into DAG traversal with book keeping
-// Recursively return child node to the parent node
-//  A child node is either a:
-//   dummy scan node (to be modified data is executed and returned) or
-//   a valid execution node
-// When a node has siblings, it save itself into the output vector (since it is the start of a
-//  fragment) and returns a dummy scan node
+/// Parse the given query fragment rooted at `root` with id `fragment_id`
+/// into individual fragments.
+///
+/// Generated fragments are added to `output`. 'path' is the current path from
+/// the root of the physical plan to the current execution node. 'query_id`
+/// is the id of the query that this fragment is a part of.
+///
+/// TODO: Turn this into DAG traversal with book keeping
+/// Recursively return child node to the parent node
+///  A child node is either a:
+///   dummy scan node (to be modified data is executed and returned) or
+///   a valid execution node
+/// When a node has siblings, it save itself into the output vector (since it is the start of a
+///  fragment) and returns a dummy scan node
 #[async_recursion]
 pub async fn parse_into_fragments(
     root: Arc<dyn ExecutionPlan>,
@@ -131,15 +143,16 @@ pub async fn parse_into_fragments(
     query_id: u64,
     mut path: Vec<u32>,
     priority: i64,
+    pipelined: bool,
 ) -> Arc<dyn ExecutionPlan> {
     let children = root.children();
 
-    // Trivial case of no children
+    // Trivial case of no children.
     if children.is_empty() {
         return root;
     }
 
-    // Single child just go down
+    // Single child just go down.
     if children.len() == 1 {
         path.push(0);
         let new_child = parse_into_fragments(
@@ -149,156 +162,56 @@ pub async fn parse_into_fragments(
             query_id,
             path,
             priority,
+            pipelined,
         )
         .await;
         return root.with_new_children(vec![new_child]).unwrap();
     }
 
-    let mut new_children = Vec::<Arc<dyn ExecutionPlan>>::new();
-
+    // If we encounter a hash build execution node we should execute the build
+    // side as a separate fragment.
     if let Some(node) = root.as_any().downcast_ref::<HashJoinExec>() {
-        let build_side = node.left.clone();
-
-        let build_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let build_fragment = QueryFragment {
-            query_id,
-            fragment_id: build_fragment_id,
-            root: None,
-            parent_path_from_root: Vec::new(),
-            child_fragments: Vec::new(),
-            parent_fragments: vec![fragment_id],
-            enqueued_time: None,
-            fragment_cost: None,
-            query_priority: 0,
-        };
-        output.insert(build_fragment_id, build_fragment);
-
-        let parsed_build_side = parse_into_fragments(
-            build_side,
-            build_fragment_id,
-            output,
-            query_id,
-            Vec::new(),
-            priority,
-        )
-        .await;
-
-        let build_side_new = HashBuildExec::try_new(
-            parsed_build_side.clone(),
-            node.on.iter().map(|on| on.0.clone()).collect(),
-            None,
-            &node.join_type,
-            None,
-            node.mode,
-            node.null_equals_null,
-        )
-        .unwrap();
-
-        let build_fragment_ref = output.get_mut(&build_fragment_id).unwrap();
-        let mut new_path = path.clone();
-        new_path.push(0);
-        build_fragment_ref.parent_path_from_root.push(new_path);
-        build_fragment_ref.root = Some(Arc::new(build_side_new));
-
-        let probe_side = node.right.clone();
-        let probe_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let parsed_probe_side = parse_into_fragments(
-            probe_side,
-            probe_fragment_id,
-            output,
-            query_id,
-            Vec::new(),
-            priority,
-        )
-        .await;
-
-        let new_root = HashProbeExec::try_new(
-            parsed_build_side,
-            parsed_probe_side,
-            node.on.clone(),
-            node.filter.clone(),
-            &node.join_type,
-            None,
-            node.mode,
-            node.null_equals_null,
-        );
-        return Arc::new(new_root.unwrap());
-    }
-
-    for (child_num, child) in (0_u32..).zip(children.into_iter()) {
-        let child_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let child_query_fragment = QueryFragment {
-            query_id,
-            fragment_id: child_fragment_id,
-            root: None,
-            parent_path_from_root: vec![],
-            child_fragments: vec![],
-            parent_fragments: vec![fragment_id],
-            query_priority: priority,
-            enqueued_time: None,
-            fragment_cost: None,
-        };
-        output.insert(child_fragment_id, child_query_fragment);
-
-        let new_child =
-            parse_into_fragments(child, child_fragment_id, output, query_id, vec![], priority)
-                .await;
-
-        let dummy_scan_node = create_dummy_scans(&new_child).await.unwrap();
-        new_children.push(dummy_scan_node);
-
-        // Get a reference to the newly created child fragment
-        let child_fragment_ref = output.get_mut(&child_fragment_id).unwrap();
-        let mut new_path = path.clone();
-        new_path.push(child_num);
-        child_fragment_ref.parent_path_from_root.push(new_path);
-        child_fragment_ref.root = Some(new_child);
-        populate_fragment_cost(output.get_mut(&child_fragment_id).unwrap()).await;
-
-        output
-            .get_mut(&fragment_id)
-            .unwrap()
-            .child_fragments
-            .push(child_fragment_id);
-    }
-
-    let new_root = root.with_new_children(new_children);
-    new_root.unwrap()
-}
-
-#[async_recursion]
-pub async fn parse_into_fragments_naive(
-    root: Arc<dyn ExecutionPlan>,
-    fragment_id: QueryFragmentId,
-    output: &mut HashMap<QueryFragmentId, QueryFragment>,
-    query_id: u64,
-    mut path: Vec<u32>,
-    priority: i64,
-) -> Arc<dyn ExecutionPlan> {
-    let children = root.children();
-
-    // Trivial case of no children
-    if children.is_empty() {
-        return root;
-    }
-
-    // Single child just go down
-    if children.len() == 1 {
-        path.push(0);
-        let new_child = parse_into_fragments_naive(
-            children[0].clone(),
+        return create_build_fragment(
+            node,
             fragment_id,
             output,
             query_id,
             path,
             priority,
+            pipelined,
         )
         .await;
-        return root.with_new_children(vec![new_child]).unwrap();
     }
 
+    // Otherwise we should create the child fragments.
+    let new_children = create_child_fragments(
+        children,
+        fragment_id,
+        output,
+        query_id,
+        path,
+        priority,
+        pipelined,
+    )
+    .await;
+
+    let new_root = root.with_new_children(new_children);
+    new_root.unwrap()
+}
+
+/// Parse `children` into query fragments.
+async fn create_child_fragments(
+    children: Vec<Arc<dyn ExecutionPlan>>,
+    fragment_id: QueryFragmentId,
+    output: &mut HashMap<QueryFragmentId, QueryFragment>,
+    query_id: u64,
+    path: Vec<u32>,
+    priority: i64,
+    pipelined: bool,
+) -> Vec<Arc<dyn ExecutionPlan>> {
     let mut new_children = Vec::<Arc<dyn ExecutionPlan>>::new();
 
+    // Iterate through all the children
     for (child_num, child) in (0_u32..).zip(children.into_iter()) {
         let child_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
         let child_query_fragment = QueryFragment {
@@ -314,20 +227,23 @@ pub async fn parse_into_fragments_naive(
         };
         output.insert(child_fragment_id, child_query_fragment);
 
-        let new_child = parse_into_fragments_naive(
+        let new_child = parse_into_fragments(
             child,
             child_fragment_id,
             output,
             query_id,
             vec![],
             priority,
+            pipelined,
         )
         .await;
 
+        // Add a dummy scan node as a placeholder for the output of this
+        // just-created query fragment.
         let dummy_scan_node = create_dummy_scans(&new_child).await.unwrap();
         new_children.push(dummy_scan_node);
 
-        // Get a reference to the newly created child fragment
+        // Get a reference to the newly-created child fragment.
         let child_fragment_ref = output.get_mut(&child_fragment_id).unwrap();
         let mut new_path = path.clone();
         new_path.push(child_num);
@@ -341,9 +257,95 @@ pub async fn parse_into_fragments_naive(
             .child_fragments
             .push(child_fragment_id);
     }
+    new_children
+}
 
-    let new_root = root.with_new_children(new_children);
-    new_root.unwrap()
+/// Split the hash join execution `node` into build and probe fragments.
+/// Returns a new [`ExecutionPlan`] that represents the results of executing
+/// this hash join.
+async fn create_build_fragment(
+    node: &HashJoinExec,
+    fragment_id: QueryFragmentId,
+    output: &mut HashMap<QueryFragmentId, QueryFragment>,
+    query_id: u64,
+    path: Vec<u32>,
+    priority: i64,
+    pipelined: bool,
+) -> Arc<dyn ExecutionPlan> {
+    let build_side = node.left.clone();
+
+    // Create the build fragment with default parameters and add it to
+    // `output`.
+    let build_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+    let build_fragment = QueryFragment {
+        query_id,
+        fragment_id: build_fragment_id,
+        root: None,
+        parent_path_from_root: Vec::new(),
+        child_fragments: Vec::new(),
+        parent_fragments: vec![fragment_id],
+        enqueued_time: None,
+        fragment_cost: None,
+        query_priority: 0,
+    };
+    output.insert(build_fragment_id, build_fragment);
+
+    // Parse the build side and create a [`HashBuildExec`] execution node
+    // for it.
+    let parsed_build_side = parse_into_fragments(
+        build_side,
+        build_fragment_id,
+        output,
+        query_id,
+        Vec::new(),
+        priority,
+        pipelined,
+    )
+    .await;
+
+    let build_side_new = HashBuildExec::try_new(
+        parsed_build_side.clone(),
+        node.on.iter().map(|on| on.0.clone()).collect(),
+        None,
+        &node.join_type,
+        None,
+        node.mode,
+        node.null_equals_null,
+    )
+    .unwrap();
+
+    let build_fragment_ref = output.get_mut(&build_fragment_id).unwrap();
+    let mut new_path = path.clone();
+    new_path.push(0);
+    build_fragment_ref.parent_path_from_root.push(new_path);
+    build_fragment_ref.root = Some(Arc::new(build_side_new));
+
+    // TODO(Aditya): the probe side should not be a separate fragment,
+    // it should extent the current fragment to form a long pipeline.
+    let probe_side = node.right.clone();
+    let probe_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+    let parsed_probe_side = parse_into_fragments(
+        probe_side,
+        probe_fragment_id,
+        output,
+        query_id,
+        Vec::new(),
+        priority,
+        pipelined,
+    )
+    .await;
+
+    let new_root = HashProbeExec::try_new(
+        parsed_build_side,
+        parsed_probe_side,
+        node.on.clone(),
+        node.filter.clone(),
+        &node.join_type,
+        None,
+        node.mode,
+        node.null_equals_null,
+    );
+    return Arc::new(new_root.unwrap());
 }
 
 // Dummy Scan nodes will created using [`plan`], attached to its parents.
