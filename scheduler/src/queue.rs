@@ -72,7 +72,6 @@ pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
         return None;
     } else {
         let frag = all_fragments.get(&ref_id.unwrap()).unwrap();
-        dbg!(frag.query_priority);
         pending_fragments.retain(|x| *x != ref_id.unwrap());
     }
 
