@@ -14,7 +14,7 @@ Cargo.lock
 *.pdb
 
 *~
-
+TPC-H V3.0.1
 .DS_Store
 .vscode/
 scheduler/.DS_Store

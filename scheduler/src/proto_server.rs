@@ -1,6 +1,5 @@
 use prost::Message;
-use tokio::runtime;
-use tokio::runtime::Builder;
+
 use tokio::runtime::Handle;
 use tonic::{transport::Server, Code, Request, Response, Status};
 
@@ -203,14 +202,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use tokio::runtime;
 
     let rt = runtime::Builder::new_multi_thread()
-        .thread_stack_size(3 * 1024 * 1024)
+        .thread_stack_size(10 * 1024 * 1024)
         .enable_all()
         .build()
         .unwrap();
 
-    for i in 0..1 {
+    for _i in 0..1 {
         handles.push(rt.spawn(async move {
-            server().await;
+            let _ = server().await;
         }));
     }
 

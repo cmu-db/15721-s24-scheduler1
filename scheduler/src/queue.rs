@@ -47,10 +47,10 @@ pub fn get_priority_from_fragment(fragment: &PhysicalPlanFragment) -> i128 {
     // TODO Justify these magic constants and test them
     let priority = (fragment.query_priority as i128) * 100 + (time as i128) / 100;
     let cost_offset = match fragment.fragment_cost {
-        Some(cost) => 100 - (cost as i128) / 1000,
+        Some(cost) => 30 - (cost as i128),
         None => 0,
     };
-    priority + cost_offset
+    priority + cost_offset * 20
 }
 
 /// Get the plan with the highest priorty from the queue
@@ -71,6 +71,8 @@ pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
     if ref_id.is_none() {
         return None;
     } else {
+        let frag = all_fragments.get(&ref_id.unwrap()).unwrap();
+        dbg!(frag.query_priority);
         pending_fragments.retain(|x| *x != ref_id.unwrap());
     }
 
