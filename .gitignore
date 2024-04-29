@@ -19,4 +19,4 @@ TPC-H V3.0.1
 .vscode/
 scheduler/.DS_Store
 scheduler/src/.DS_Store
-*.parquet
+scheduler/src/example_data/*.parquet
