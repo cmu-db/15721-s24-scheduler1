@@ -1,4 +1,4 @@
-use crate::parser::{parse_into_fragments_wrapper, PhysicalPlanFragment, QueryFragmentId};
+use crate::parser::{parse_into_fragments_wrapper, QueryFragment, QueryFragmentId};
 use crate::queue::{add_fragments_to_scheduler, finish_fragment};
 use crate::scheduler_interface::*;
 use datafusion::datasource::listing::PartitionedFile;
@@ -11,27 +11,28 @@ use lazy_static::lazy_static;
 use tokio::sync::RwLock;
 
 use std::collections::HashMap;
-use std::path::Path;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
-use super::debug_println;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
-#[derive(Debug)]
-struct ExecutorHandle {
-    port: i32,
-}
-
+/// The scheduler instance.
+///
+/// Stores the metadata needed for query scheduling.
 #[derive(Debug)]
 pub struct Scheduler {
-    pub all_fragments: RwLock<HashMap<QueryFragmentId, PhysicalPlanFragment>>,
+    /// Map from query fragment id to fragment.
+    pub all_fragments: RwLock<HashMap<QueryFragmentId, QueryFragment>>,
+
+    /// Query fragments pending execution.
     pub pending_fragments: RwLock<Vec<QueryFragmentId>>,
+
     pub job_status: RwLock<HashMap<i32, Sender<Vec<u8>>>>,
+
     pub intermediate_files: RwLock<HashMap<String, i32>>,
-    executors: RwLock<Vec<ExecutorHandle>>,
 }
 
 pub enum PipelineBreakers {
@@ -86,6 +87,8 @@ impl Scheduler {
         }
     }
 
+    /// Marks the completion of the execution of the query fragment with
+    /// `fragment_id` with result `fragment_result`.
     pub async fn finish_fragment(
         &self,
         child_fragment_id: QueryFragmentId,
@@ -105,12 +108,7 @@ impl Scheduler {
 
     pub fn parse_physical_plan(&self, _physical_plan: &dyn ExecutionPlan) {}
 
-    pub async fn register_executor(&self, port: i32) {
-        self.executors.write().await.push(ExecutorHandle { port });
-        debug_println!("Executor registered; port={port}");
-    }
-
-    pub async fn get_plan_from_queue(&self) -> Option<PhysicalPlanFragment> {
+    pub async fn get_plan_from_queue(&self) -> Option<QueryFragment> {
         crate::queue::get_plan_from_queue().await
     }
 }
@@ -120,7 +118,6 @@ lazy_static! {
         all_fragments: RwLock::new(HashMap::new()),
         pending_fragments: RwLock::new(vec![]),
         job_status: RwLock::new(HashMap::<i32, Sender<Vec<u8>>>::new()),
-        executors: RwLock::new(vec![]),
         intermediate_files: RwLock::new(HashMap::<String, i32>::new()),
     };
 }

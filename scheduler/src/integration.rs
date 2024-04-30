@@ -1,4 +1,4 @@
-use crate::parser::PhysicalPlanFragment;
+use crate::parser::QueryFragment;
 
 use crate::scheduler;
 use crate::scheduler::SCHEDULER_INSTANCE;
@@ -79,10 +79,10 @@ pub async fn process_sql_request(
     item_id: u64,
 ) -> Result<(), Box<dyn error::Error>> {
     let sql = format!(
-        "SELECT a.*, b.price, a.quantity * b.price as total 
-                        FROM orders a inner join prices b 
-                        ON a.item_id = b.item_id 
-                        and a.item_id = {} 
+        "SELECT a.*, b.price, a.quantity * b.price as total
+                        FROM orders a inner join prices b
+                        ON a.item_id = b.item_id
+                        and a.item_id = {}
                         ORDER by a.order_id",
         item_id
     );
@@ -96,7 +96,7 @@ pub async fn process_sql_request(
 }
 
 pub async fn process_physical_fragment(
-    fragment: PhysicalPlanFragment,
+    fragment: QueryFragment,
     ctx: &SessionContext,
     abs_path_str: &str,
     id: u64,
@@ -256,10 +256,10 @@ mod tests {
         .await?;
 
         // create a plan to run a SQL query
-        let sql = "SELECT a.*, b.price, a.quantity * b.price as total 
-                         FROM orders a inner join prices b 
-                         ON a.item_id = b.item_id 
-                         and a.item_id = 6 
+        let sql = "SELECT a.*, b.price, a.quantity * b.price as total
+                         FROM orders a inner join prices b
+                         ON a.item_id = b.item_id
+                         and a.item_id = 6
                          ORDER by a.order_id";
         let logical_plan = ctx.state().create_logical_plan(sql).await?;
         let physical_plan = ctx.state().create_physical_plan(&logical_plan).await?;

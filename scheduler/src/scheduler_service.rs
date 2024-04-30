@@ -10,24 +10,26 @@ use datafusion::execution::context::SessionContext;
 use datafusion_proto::physical_plan::from_proto;
 use datafusion_proto::protobuf::FileScanExecConf;
 
-use lib::scheduler::SCHEDULER_INSTANCE;
-use lib::scheduler_interface::scheduler_service_server::SchedulerService;
-use lib::scheduler_interface::scheduler_service_server::SchedulerServiceServer;
-use lib::scheduler_interface::*;
+use chronos::scheduler::SCHEDULER_INSTANCE;
+use chronos::scheduler_interface::scheduler_server::Scheduler;
+use chronos::scheduler_interface::scheduler_server::SchedulerServer;
+use chronos::scheduler_interface::*;
 
 use bytes::IntoBuf;
 use tokio::sync::mpsc;
+
+use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Default)]
 pub struct MyScheduler {}
 
 #[tonic::async_trait]
-impl SchedulerService for MyScheduler {
+impl Scheduler for MyScheduler {
     async fn get_query(
         &self,
         _request: Request<GetQueryArgs>,
     ) -> Result<Response<GetQueryRet>, Status> {
-        let plan = lib::scheduler::SCHEDULER_INSTANCE
+        let plan = chronos::scheduler::SCHEDULER_INSTANCE
             .get_plan_from_queue()
             .await;
 
@@ -42,17 +44,19 @@ impl SchedulerService for MyScheduler {
                             fragment_id: i32::try_from(p.fragment_id).unwrap(),
                             physical_plan: p_bytes.to_vec(),
                             root: p.parent_fragments.is_empty(),
+                            hash_build_data_info: vec![],
                         };
                         Ok(Response::new(reply))
                     }
                     Err(e) => {
                         println!("{:?}", e);
-                        // lib::queue::kill_query(p.query_id); TODO
+                        // chronos::queue::kill_query(p.query_id); TODO
                         let reply = GetQueryRet {
                             query_id: -1,
                             fragment_id: -1,
                             physical_plan: vec![],
                             root: true, // setting this to true frees the CLI on the tokio channel, will do for now
+                            hash_build_data_info: vec![],
                         };
                         Ok(Response::new(reply))
                     }
@@ -64,6 +68,7 @@ impl SchedulerService for MyScheduler {
                     fragment_id: -1,
                     physical_plan: vec![],
                     root: false,
+                    hash_build_data_info: vec![],
                 };
                 Ok(Response::new(reply))
             }
@@ -88,11 +93,9 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
 
-        let sched_info = lib::scheduler::SCHEDULER_INSTANCE
+        let sched_info = chronos::scheduler::SCHEDULER_INSTANCE
             .schedule_query(physical_plan, metadata.unwrap(), false)
             .await;
-
-        let _finish_time = std::time::SystemTime::now(); // TODO: send this back over rpc as well, figure out proto type
 
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1);
 
@@ -107,6 +110,13 @@ impl SchedulerService for MyScheduler {
         let reply = ScheduleQueryRet {
             query_id: sched_info.query_id,
             file_scan_config: rx.recv().await.unwrap_or_default(),
+            enqueue_time: sched_info
+                .enqueue_time
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                .try_into()
+                .unwrap(),
         };
         Ok(Response::new(reply))
     }
@@ -143,10 +153,10 @@ impl SchedulerService for MyScheduler {
             return Err(status);
         }
 
-        let to_delete = lib::scheduler::SCHEDULER_INSTANCE
+        let to_delete = chronos::scheduler::SCHEDULER_INSTANCE
             .finish_fragment(
                 fragment_id.try_into().unwrap(),
-                lib::scheduler::QueryResult::ParquetExec(file_scan_conf.clone()),
+                chronos::scheduler::QueryResult::ParquetExec(file_scan_conf.clone()),
                 file_scan_conf.file_groups,
             )
             .await;
@@ -168,19 +178,6 @@ impl SchedulerService for MyScheduler {
         };
         Ok(Response::new(reply))
     }
-
-    async fn register_executor(
-        &self,
-        request: Request<RegisterExecutorArgs>,
-    ) -> Result<Response<RegisterExecutorRet>, Status> {
-        let request_content = request.into_inner();
-        let port = request_content.port;
-
-        SCHEDULER_INSTANCE.register_executor(port).await;
-
-        let reply = RegisterExecutorRet {};
-        Ok(Response::new(reply))
-    }
 }
 
 async fn server() -> Result<(), Box<dyn std::error::Error>> {
@@ -190,7 +187,7 @@ async fn server() -> Result<(), Box<dyn std::error::Error>> {
     println!("Scheduler server listening on {addr}");
 
     Server::builder()
-        .add_service(SchedulerServiceServer::new(scheduler))
+        .add_service(SchedulerServer::new(scheduler))
         .serve(addr)
         .await?;
 
