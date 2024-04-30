@@ -2,6 +2,7 @@ use crate::{
     parser::{QueryFragment, QueryFragmentId},
     scheduler::{QueryResult, SCHEDULER_INSTANCE},
 };
+use datafusion::datasource::listing::PartitionedFile;
 use datafusion::{config::TableParquetOptions, physical_plan::joins::HashJoinExec};
 use datafusion::{
     datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
@@ -47,10 +48,10 @@ pub fn get_priority_from_fragment(fragment: &QueryFragment) -> i128 {
     // TODO Justify these magic constants and test them
     let priority = (fragment.query_priority as i128) * 100 + (time as i128) / 100;
     let cost_offset = match fragment.fragment_cost {
-        Some(cost) => 100 - (cost as i128) / 1000,
+        Some(cost) => 30 - (cost as i128),
         None => 0,
     };
-    priority + cost_offset
+    priority + cost_offset * 20
 }
 
 /// Get the plan with the highest priorty from the queue.
@@ -71,6 +72,7 @@ pub async fn get_plan_from_queue() -> Option<QueryFragment> {
     if ref_id.is_none() {
         return None;
     } else {
+        let _frag = all_fragments.get(&ref_id.unwrap()).unwrap();
         pending_fragments.retain(|x| *x != ref_id.unwrap());
     }
 
@@ -132,9 +134,14 @@ pub fn update_plan_parent(
 
 /// Marks the completion of the execution of the query fragment with
 /// `fragment_id` with result `fragment_result`.
-pub async fn finish_fragment(fragment_id: QueryFragmentId, fragment_result: QueryResult) {
+pub async fn finish_fragment(
+    fragment_id: QueryFragmentId,
+    fragment_result: QueryResult,
+    intermediate_files: Vec<Vec<PartitionedFile>>,
+) -> Vec<String> {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
+    let mut intermediate_file_pin = SCHEDULER_INSTANCE.intermediate_files.write().await;
     let parent_fragment_ids = all_fragments
         .get(&fragment_id)
         .unwrap()
@@ -146,6 +153,32 @@ pub async fn finish_fragment(fragment_id: QueryFragmentId, fragment_result: Quer
         .unwrap()
         .parent_path_from_root
         .clone();
+
+    // these intermediate files belongs to the child_fragment which has been processed and should be deleted
+    let child_fragment_intermediate_files = all_fragments
+        .get(&fragment_id)
+        .unwrap()
+        .intermediate_files
+        .clone()
+        .into_iter();
+
+    let mut to_delete: Vec<String> = vec![];
+
+    for file in child_fragment_intermediate_files {
+        match intermediate_file_pin.get_mut(&file) {
+            None => {
+                debug_println!("This is a intermediate file that wasn't recorded or undercounted")
+            }
+            Some(1) => {
+                intermediate_file_pin.remove(&file);
+                to_delete.push(file);
+            }
+            Some(k) => {
+                debug_assert!(*k > 1);
+                *k -= 1;
+            }
+        }
+    }
 
     let mut new_ids_to_push = vec![];
     for (i, id) in parent_fragment_ids.iter().enumerate() {
@@ -159,6 +192,17 @@ pub async fn finish_fragment(fragment_id: QueryFragmentId, fragment_result: Quer
         );
 
         parent_fragment.root = Some(new_root);
+
+        for partition in intermediate_files.clone().into_iter() {
+            for file in partition.clone().into_iter() {
+                *intermediate_file_pin
+                    .entry(file.path().to_string())
+                    .or_insert(0) += 1;
+                parent_fragment
+                    .intermediate_files
+                    .insert(file.path().to_string());
+            }
+        }
 
         parent_fragment
             .child_fragments
@@ -174,6 +218,8 @@ pub async fn finish_fragment(fragment_id: QueryFragmentId, fragment_result: Quer
         "Updated finished fragments, {} left available to be executed in pending queue",
         pending_fragments.len()
     );
+
+    to_delete
 }
 
 fn create_arrow_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPlan> {
@@ -291,6 +337,7 @@ mod tests {
             query_priority: 0,
             enqueued_time: None,
             fragment_cost: None,
+            intermediate_files: HashSet::<String>::new(),
         };
         let mut map: HashMap<QueryFragmentId, QueryFragment> = HashMap::new();
         map.insert(0, fragment);
@@ -395,6 +442,7 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
+            vec![vec![]],
         )
         .await;
 
@@ -413,6 +461,7 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
+            vec![vec![]],
         )
         .await;
 

@@ -1,6 +1,7 @@
 use crate::parser::{parse_into_fragments_wrapper, QueryFragment, QueryFragmentId};
 use crate::queue::{add_fragments_to_scheduler, finish_fragment};
 use crate::scheduler_interface::*;
+use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion::physical_plan::joins::HashBuildResult;
 use datafusion::physical_plan::ExecutionPlan;
@@ -10,6 +11,7 @@ use lazy_static::lazy_static;
 use tokio::sync::RwLock;
 
 use std::collections::HashMap;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
@@ -29,6 +31,8 @@ pub struct Scheduler {
     pub pending_fragments: RwLock<Vec<QueryFragmentId>>,
 
     pub job_status: RwLock<HashMap<i32, Sender<Vec<u8>>>>,
+
+    pub intermediate_files: RwLock<HashMap<String, i32>>,
 }
 
 pub enum PipelineBreakers {
@@ -65,11 +69,17 @@ impl Scheduler {
     pub async fn schedule_query(
         &self,
         physical_plan: Arc<dyn ExecutionPlan>,
-        _query_info: QueryInfo,
+        query_info: QueryInfo,
         pipelined: bool,
     ) -> ScheduleResult {
         let query_id = QUERY_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
-        let fragments = parse_into_fragments_wrapper(physical_plan, query_id, 1, pipelined).await;
+        let fragments = parse_into_fragments_wrapper(
+            physical_plan,
+            query_id,
+            query_info.priority.into(),
+            pipelined,
+        )
+        .await;
         add_fragments_to_scheduler(fragments).await;
         ScheduleResult {
             query_id: query_id.try_into().unwrap(),
@@ -83,8 +93,9 @@ impl Scheduler {
         &self,
         child_fragment_id: QueryFragmentId,
         fragment_result: QueryResult,
-    ) {
-        finish_fragment(child_fragment_id, fragment_result).await
+        intermediate_files: Vec<Vec<PartitionedFile>>,
+    ) -> Vec<String> {
+        finish_fragment(child_fragment_id, fragment_result, intermediate_files).await
     }
 
     pub fn query_job_status(&self, _query_id: i32) -> QueryStatus {
@@ -107,5 +118,6 @@ lazy_static! {
         all_fragments: RwLock::new(HashMap::new()),
         pending_fragments: RwLock::new(vec![]),
         job_status: RwLock::new(HashMap::<i32, Sender<Vec<u8>>>::new()),
+        intermediate_files: RwLock::new(HashMap::<String, i32>::new()),
     };
 }

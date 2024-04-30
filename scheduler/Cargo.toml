@@ -21,6 +21,10 @@ path = "src/executor.rs"
 name = "scheduler-cli"
 path = "src/cli.rs"
 
+[[bin]]
+name = "bench"
+path = "src/bench.rs"
+
 [dependencies]
 datafusion = { workspace = true }
 datafusion-common = { workspace = true }
@@ -30,7 +34,7 @@ tonic = "0.11"
 lazy_static = "1.4.0"
 prost = "0.12.3"
 prost-types = "0.12.3"
-tokio = { version = "1.36", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.36", features = ["macros", "rt-multi-thread", "fs"] }
 async-recursion = "1.0.5"
 more-asserts = "0.3.1"
 futures = "0.3.30"

@@ -1,4 +1,6 @@
 use prost::Message;
+
+use tokio::runtime::Handle;
 use tonic::{transport::Server, Code, Request, Response, Status};
 
 use datafusion_proto::bytes::{physical_plan_from_bytes, physical_plan_to_bytes};
@@ -150,11 +152,12 @@ impl Scheduler for MyScheduler {
             let status = Status::new(Code::InvalidArgument, "Query status not specified");
             return Err(status);
         }
-        // let scheduler = SCHEDULER_INSTANCE.lock().await;
-        chronos::scheduler::SCHEDULER_INSTANCE
+
+        let to_delete = chronos::scheduler::SCHEDULER_INSTANCE
             .finish_fragment(
                 fragment_id.try_into().unwrap(),
-                chronos::scheduler::QueryResult::ParquetExec(file_scan_conf),
+                chronos::scheduler::QueryResult::ParquetExec(file_scan_conf.clone()),
+                file_scan_conf.file_groups,
             )
             .await;
 
@@ -170,13 +173,14 @@ impl Scheduler for MyScheduler {
             }
         }
 
-        let reply = QueryExecutionDoneRet {};
+        let reply = QueryExecutionDoneRet {
+            intermediate_files: to_delete,
+        };
         Ok(Response::new(reply))
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn server() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:50051".parse()?;
     let scheduler = MyScheduler::default();
 
@@ -186,6 +190,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(SchedulerServer::new(scheduler))
         .serve(addr)
         .await?;
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut handles = Vec::new();
+    let _handle = Handle::current;
+
+    use tokio::runtime;
+
+    let rt = runtime::Builder::new_multi_thread()
+        .thread_stack_size(10 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap();
+
+    for _i in 0..1 {
+        handles.push(rt.spawn(async move {
+            let _ = server().await;
+        }));
+    }
+
+    for handle in handles {
+        let _ = handle.await;
+    }
 
     Ok(())
 }

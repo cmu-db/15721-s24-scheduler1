@@ -87,6 +87,7 @@ message QueryExecutionDoneArgs {
     // Whether the file is root
     bool root = 4;
 
+    // Query id of the whole plan
     int32 query_id = 5;
 
     bool generated_hash_table = 6;
@@ -94,6 +95,9 @@ message QueryExecutionDoneArgs {
 
 // Information returned from the QueryExecutionDone RPC.
 message QueryExecutionDoneRet {
+
+    // Delete intermediate files
+    repeated string intermediate_files = 1;
 
 }
 
