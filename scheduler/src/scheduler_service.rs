@@ -97,14 +97,14 @@ impl Scheduler for MyScheduler {
         }
 
         let sched_info = chronos::scheduler::SCHEDULER_INSTANCE
-            .schedule_query(physical_plan, metadata.unwrap(), false)
+            .schedule_query(physical_plan, metadata.unwrap(), true)
             .await;
 
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1);
 
         {
             SCHEDULER_INSTANCE
-                .job_status
+                .query_result_senders
                 .write()
                 .await
                 .insert(sched_info.query_id, tx);
@@ -179,7 +179,7 @@ impl Scheduler for MyScheduler {
         if request_content.root {
             // let mut scheduler = SCHEDULER_INSTANCE.lock().await;
             if let Some(tx) = SCHEDULER_INSTANCE
-                .job_status
+                .query_result_senders
                 .write()
                 .await
                 .remove(&request_content.query_id)

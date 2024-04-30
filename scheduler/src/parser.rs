@@ -178,7 +178,7 @@ pub async fn parse_into_fragments(
     // If we encounter a hash build execution node we should execute the build
     // side as a separate fragment.
     if pipelined && root.as_any().downcast_ref::<HashJoinExec>().is_some() {
-        return create_build_fragment(
+        return create_hash_build_probe_fragments(
             root,
             fragment_id,
             output,
@@ -272,7 +272,7 @@ async fn create_child_fragments(
 /// Split the hash join execution `node` into build and probe fragments.
 /// Returns a new [`ExecutionPlan`] that represents the results of executing
 /// this hash join.
-async fn create_build_fragment(
+async fn create_hash_build_probe_fragments(
     arc_node: Arc<dyn ExecutionPlan>,
     fragment_id: QueryFragmentId,
     output: &mut HashMap<QueryFragmentId, QueryFragment>,
@@ -284,8 +284,7 @@ async fn create_build_fragment(
     let node = arc_node.as_any().downcast_ref::<HashJoinExec>().unwrap();
     let build_side = node.left.clone();
 
-    // Create the build fragment with default parameters and add it to
-    // `output`.
+    // Create the build fragment with default parameters and add it to `output`.
     let build_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
     let build_fragment = QueryFragment {
         query_id,
@@ -302,8 +301,7 @@ async fn create_build_fragment(
     };
     output.insert(build_fragment_id, build_fragment);
 
-    // Parse the build side and create a [`HashBuildExec`] execution node
-    // for it.
+    // Parse the build side and create a [`HashBuildExec`] execution node for it.
     let parsed_build_side = parse_into_fragments(
         build_side,
         build_fragment_id,

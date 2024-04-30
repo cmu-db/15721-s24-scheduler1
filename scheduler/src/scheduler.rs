@@ -15,10 +15,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
-static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
-use crate::debug_println;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
+
+/// Generator for query ids.
+static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
 /// The scheduler instance.
 ///
@@ -31,7 +32,8 @@ pub struct Scheduler {
     /// Query fragments pending execution.
     pub pending_fragments: RwLock<Vec<QueryFragmentId>>,
 
-    pub job_status: RwLock<HashMap<i32, Sender<Vec<u8>>>>,
+    /// Map from query id to a [`Sender`] for sending the [`FileScanConfig`] for the query result.
+    pub query_result_senders: RwLock<HashMap<i32, Sender<Vec<u8>>>>,
 
     pub intermediate_files: RwLock<HashMap<String, i32>>,
 }
@@ -53,18 +55,20 @@ pub enum PipelineBreakers {
     Expand,
 }
 
+/// Information received at the time the query is scheduled for execution.
 pub struct ScheduleResult {
+    /// The query id.
     pub query_id: i32,
+    /// The time the query was enqueued.
     pub enqueue_time: SystemTime,
 }
 
+/// The result of query execution.
 pub enum QueryResult {
     ArrowExec(FileScanConfig),
     HashBuildExec(HashBuildResult),
     ParquetExec(FileScanConfig),
 }
-
-pub struct IntermediateNode {}
 
 impl Scheduler {
     pub async fn schedule_query(
@@ -127,7 +131,7 @@ lazy_static! {
     pub static ref SCHEDULER_INSTANCE: Scheduler = Scheduler {
         all_fragments: RwLock::new(HashMap::new()),
         pending_fragments: RwLock::new(vec![]),
-        job_status: RwLock::new(HashMap::<i32, Sender<Vec<u8>>>::new()),
+        query_result_senders: RwLock::new(HashMap::<i32, Sender<Vec<u8>>>::new()),
         intermediate_files: RwLock::new(HashMap::<String, i32>::new()),
     };
 }

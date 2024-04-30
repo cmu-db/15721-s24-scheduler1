@@ -133,13 +133,13 @@ message AbortQueryRet {
 
 // The scheduler interface.
 service Scheduler {
-
     // Used by the optimizer to schedule a new query.
     rpc ScheduleQuery(ScheduleQueryArgs) returns (ScheduleQueryRet);
 
     // Used by the optimizer to query the status of a job.
     rpc QueryJobStatus(QueryJobStatusArgs) returns (QueryJobStatusRet);
 
+    // Used by the execution engine to get a new query to execute.
     rpc GetQuery(GetQueryArgs) returns (GetQueryRet);
 
     // Used by the execution engine to notify the scheduler that the execution

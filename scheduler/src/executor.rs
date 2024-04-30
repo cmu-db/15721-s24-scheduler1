@@ -1,6 +1,4 @@
 use async_recursion::async_recursion;
-use chronos::executor_interface::executor_service_server::ExecutorService;
-use chronos::executor_interface::{ExecuteQueryArgs, ExecuteQueryRet};
 use chronos::scheduler_interface::scheduler_client::SchedulerClient;
 use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion::execution::memory_pool::MemoryConsumer;
@@ -21,12 +19,13 @@ use chronos::scheduler_interface::{
 };
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
-use tonic::{Code, Request, Response, Status};
+use tonic::Code;
 
 use ahash::RandomState;
 use chronos::integration::{local_file_config, spill_records_to_disk};
 use core::time;
 use datafusion::physical_plan::ExecutionPlanProperties;
+use datafusion::physical_plan::{self, ExecutionPlan};
 use datafusion::prelude::*;
 // use lib::integration::{local_file_config, local_filegroup_config, spill_records_to_disk};
 use chronos::integration::local_filegroup_config;
@@ -48,20 +47,6 @@ enum QueryResult {
 pub struct Executor {
     random_state: RandomState,
     generated_hash_tables: Arc<RwLock<HashMap<i32, JoinLeftData>>>,
-}
-use datafusion::physical_plan::{self, ExecutionPlan};
-
-#[tonic::async_trait]
-impl ExecutorService for Executor {
-    async fn execute_query(
-        &self,
-        request: Request<ExecuteQueryArgs>,
-    ) -> Result<Response<ExecuteQueryRet>, Status> {
-        let _request_content = request.into_inner();
-
-        let reply = ExecuteQueryRet {};
-        Ok(Response::new(reply))
-    }
 }
 
 impl Executor {
