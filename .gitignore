@@ -20,3 +20,7 @@ TPC-H V3.0.1
 scheduler/.DS_Store
 scheduler/src/.DS_Store
 scheduler/src/example_data/*.parquet
+scheduler/src/example_data/spilltest
+scheduler/src/example_data/test_csv_abort
+scheduler/src/example_data/test_csv_conc_async
+scheduler/src/example_data/test_spill_test_part

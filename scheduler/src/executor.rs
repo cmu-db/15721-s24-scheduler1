@@ -11,7 +11,7 @@ use tonic::{Code, Request, Response, Status};
 
 use core::time;
 use datafusion::prelude::*;
-use lib::integration::{local_file_config, spill_records_to_disk};
+use lib::integration::{local_file_config, local_filegroup_config, spill_records_to_disk};
 use prost::Message;
 use std::env;
 use std::thread::sleep;
@@ -49,19 +49,31 @@ async fn process_fragment(get_query_response: GetQueryRet, ctx: &SessionContext)
     let output_stream = physical_plan::execute_stream(process_plan.clone(), context).unwrap();
 
     let intermediate_output = format!(
-        "/{wd_str}/scheduler/src/example_data/query_{query_id}_fragment_{fragment_id}.parquet"
+        "/{wd_str}/scheduler/src/example_data/query_{query_id}/fragment_{fragment_id}.parquet"
     );
 
-    spill_records_to_disk(
+    let process_plan = physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
+    let output_schema = process_plan.schema();
+
+    if get_query_response.aborted {
+        return local_file_config(output_schema, "");
+    }
+
+    let context = ctx.state().task_ctx();
+    let output_stream = physical_plan::execute_stream(process_plan.clone(), context).unwrap();
+
+    let fg = spill_records_to_disk(
         &intermediate_output,
         output_stream,
         output_schema.clone(),
+        100000,
+        4,
         get_query_response.root,
     )
     .await
     .unwrap();
 
-    local_file_config(output_schema, intermediate_output.as_str())
+    local_filegroup_config(output_schema, fg)
 }
 
 async fn initialize(port: i32, delete_intermediate: bool) {
@@ -153,7 +165,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let num_workers: i32 = args[1].parse().unwrap();
 
-    let delete_intermediate: bool = args[2].parse().unwrap_or_default();
+    let delete_intermediate: bool = if args.len() > 2 {
+        args[2].parse().unwrap_or_default()
+    } else {
+        false
+    };
 
     let mut handles = Vec::new();
     let base_port = 5555;

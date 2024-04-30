@@ -152,9 +152,9 @@ pub async fn finish_fragment(
                 intermediate_file_pin.remove(&file);
                 to_delete.push(file);
             }
-            Some(k) => {
-                debug_assert!(*k > 1);
-                *k -= 1;
+            Some(pin_count) => {
+                debug_assert!(*pin_count > 1);
+                *pin_count -= 1;
             }
         }
     }
@@ -212,6 +212,16 @@ fn create_parquet_scan_node(file_config: &FileScanConfig) -> Arc<dyn ExecutionPl
         None,
         TableParquetOptions::default(),
     ))
+}
+
+pub async fn abort_query(query_id: u64) {
+    let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
+
+    all_fragments.iter_mut().for_each(|x| {
+        if x.1.query_id == query_id {
+            x.1.aborted = true;
+        }
+    });
 }
 
 #[cfg(test)]
@@ -317,6 +327,7 @@ mod tests {
             enqueued_time: None,
             fragment_cost: None,
             intermediate_files: HashSet::<String>::new(),
+            aborted: false,
         };
         let mut map: HashMap<QueryFragmentId, PhysicalPlanFragment> = HashMap::new();
         map.insert(0, fragment);
@@ -454,5 +465,35 @@ mod tests {
             num_child += 1;
         }
         assert_eq!(num_child, 2);
+    }
+
+    #[tokio::test]
+    async fn abort_test() {
+        let physical_plan = build_basic_physical_plan().await.unwrap();
+        println!("Physical Plan: {:#?}", physical_plan);
+        validate_basic_physical_plan_structure(&physical_plan);
+
+        // Returns a hash map from query fragment ID to physical plan fragment structs
+        let fragment_map = parse_into_fragments_wrapper(physical_plan, 0, 0, true).await;
+
+        add_fragments_to_scheduler(fragment_map).await;
+        assert_eq!(SCHEDULER_INSTANCE.pending_fragments.read().await.len(), 2);
+
+        let mut child_fragment_vec = Vec::<PhysicalPlanFragment>::new();
+
+        let queued_fragment = get_plan_from_queue().await.unwrap();
+        assert!(queued_fragment.root.is_some());
+        child_fragment_vec.push(queued_fragment);
+        abort_query(0).await;
+
+        let mut expected_abort = 0;
+        for (_, value) in SCHEDULER_INSTANCE.all_fragments.read().await.iter() {
+            assert!(value.query_id != 0 || value.query_id == 0 && value.aborted);
+            if value.query_id == 0 && value.aborted {
+                expected_abort += 1;
+            }
+        }
+
+        assert!(expected_abort == 3);
     }
 }
