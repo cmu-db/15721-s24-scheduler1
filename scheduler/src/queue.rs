@@ -1,8 +1,9 @@
 use crate::{
-    parser::{PhysicalPlanFragment, QueryFragmentId},
+    parser::{QueryFragment, QueryFragmentId},
     scheduler::{QueryResult, SCHEDULER_INSTANCE},
 };
-use datafusion::{config::TableParquetOptions, datasource::listing::PartitionedFile};
+use datafusion::datasource::listing::PartitionedFile;
+use datafusion::{config::TableParquetOptions, physical_plan::joins::HashJoinExec};
 use datafusion::{
     datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
     physical_plan::joins::HashBuildExec,
@@ -11,10 +12,10 @@ use datafusion::{
 use super::debug_println;
 
 use datafusion::physical_plan::ExecutionPlan;
-use std::{collections::HashMap, collections::HashSet, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
 
 /// Once a Execution plan has been parsed push all the fragments that can be scheduled onto the queue.
-pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, PhysicalPlanFragment>) {
+pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, QueryFragment>) {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
     for (&id, fragment) in map.iter_mut() {
@@ -36,7 +37,7 @@ pub async fn add_fragments_to_scheduler(mut map: HashMap<QueryFragmentId, Physic
 }
 
 // Some assumptions have been made about priorites which may change
-pub fn get_priority_from_fragment(fragment: &PhysicalPlanFragment) -> i128 {
+pub fn get_priority_from_fragment(fragment: &QueryFragment) -> i128 {
     let time = fragment
         .enqueued_time
         .unwrap()
@@ -53,8 +54,8 @@ pub fn get_priority_from_fragment(fragment: &PhysicalPlanFragment) -> i128 {
     priority + cost_offset * 20
 }
 
-/// Get the plan with the highest priorty from the queue
-pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
+/// Get the plan with the highest priorty from the queue.
+pub async fn get_plan_from_queue() -> Option<QueryFragment> {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let all_fragments = SCHEDULER_INSTANCE.all_fragments.read().await;
 
@@ -71,7 +72,7 @@ pub async fn get_plan_from_queue() -> Option<PhysicalPlanFragment> {
     if ref_id.is_none() {
         return None;
     } else {
-        let frag = all_fragments.get(&ref_id.unwrap()).unwrap();
+        let _frag = all_fragments.get(&ref_id.unwrap()).unwrap();
         pending_fragments.retain(|x| *x != ref_id.unwrap());
     }
 
@@ -106,6 +107,24 @@ pub fn update_plan_parent(
         if i != path[0] {
             new_children.push(child);
         } else {
+            if path.len() == 2 {
+                if let Some(node) = child.as_any().downcast_ref::<HashJoinExec>() {
+                    let _probe_side = node.right().clone();
+                    // return Arc::new(
+                    //     HashProbeExec::try_new(
+                    //         probe_side,
+                    //         node.on,
+                    //         node.filter,
+                    //         &node.join_type,
+                    //         node.projection,
+                    //         node.mode,
+                    //         node.null_equals_null,
+                    //         //node.join_data,
+                    //     )
+                    //     .unwrap(),
+                    // );
+                }
+            }
             new_children.push(update_plan_parent(child, &path[1..], query_result));
         }
         i += 1;
@@ -113,8 +132,10 @@ pub fn update_plan_parent(
     root.with_new_children(new_children).unwrap()
 }
 
+/// Marks the completion of the execution of the query fragment with
+/// `fragment_id` with result `fragment_result`.
 pub async fn finish_fragment(
-    child_fragment_id: QueryFragmentId,
+    fragment_id: QueryFragmentId,
     fragment_result: QueryResult,
     intermediate_files: Vec<Vec<PartitionedFile>>,
 ) -> Vec<String> {
@@ -122,20 +143,20 @@ pub async fn finish_fragment(
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
     let mut intermediate_file_pin = SCHEDULER_INSTANCE.intermediate_files.write().await;
     let parent_fragment_ids = all_fragments
-        .get(&child_fragment_id)
+        .get(&fragment_id)
         .unwrap()
         .parent_fragments
         .clone();
 
     let parent_fragment_paths = all_fragments
-        .get(&child_fragment_id)
+        .get(&fragment_id)
         .unwrap()
         .parent_path_from_root
         .clone();
 
     // these intermediate files belongs to the child_fragment which has been processed and should be deleted
     let child_fragment_intermediate_files = all_fragments
-        .get(&child_fragment_id)
+        .get(&fragment_id)
         .unwrap()
         .intermediate_files
         .clone()
@@ -185,13 +206,13 @@ pub async fn finish_fragment(
 
         parent_fragment
             .child_fragments
-            .retain(|x| *x != child_fragment_id);
+            .retain(|x| *x != fragment_id);
         if parent_fragment.child_fragments.is_empty() {
             parent_fragment.enqueued_time = Some(SystemTime::now());
             new_ids_to_push.push(id);
         }
     }
-    all_fragments.remove(&child_fragment_id);
+    all_fragments.remove(&fragment_id);
     pending_fragments.extend(new_ids_to_push);
     debug_println!(
         "Updated finished fragments, {} left available to be executed in pending queue",
@@ -247,6 +268,7 @@ mod tests {
 
     use more_asserts as ma;
     use std::collections::HashMap;
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     async fn create_physical_plan(logical_plan: LogicalPlan) -> Result<Arc<dyn ExecutionPlan>> {
@@ -316,7 +338,7 @@ mod tests {
         validate_toy_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
-        let fragment = PhysicalPlanFragment {
+        let fragment = QueryFragment {
             fragment_id: 0,
             query_id: 0,
             root: Some(physical_plan),
@@ -329,7 +351,7 @@ mod tests {
             intermediate_files: HashSet::<String>::new(),
             aborted: false,
         };
-        let mut map: HashMap<QueryFragmentId, PhysicalPlanFragment> = HashMap::new();
+        let mut map: HashMap<QueryFragmentId, QueryFragment> = HashMap::new();
         map.insert(0, fragment);
         add_fragments_to_scheduler(map).await;
         let queued_fragment = get_plan_from_queue().await.unwrap();
@@ -408,7 +430,7 @@ mod tests {
         add_fragments_to_scheduler(fragment_map).await;
         assert_eq!(SCHEDULER_INSTANCE.pending_fragments.read().await.len(), 2);
 
-        let mut child_fragment_vec = Vec::<PhysicalPlanFragment>::new();
+        let mut child_fragment_vec = Vec::<QueryFragment>::new();
 
         let mut queued_fragment = get_plan_from_queue().await.unwrap();
         assert!(queued_fragment.root.is_some());
@@ -479,7 +501,7 @@ mod tests {
         add_fragments_to_scheduler(fragment_map).await;
         assert_eq!(SCHEDULER_INSTANCE.pending_fragments.read().await.len(), 2);
 
-        let mut child_fragment_vec = Vec::<PhysicalPlanFragment>::new();
+        let mut child_fragment_vec = Vec::<QueryFragment>::new();
 
         let queued_fragment = get_plan_from_queue().await.unwrap();
         assert!(queued_fragment.root.is_some());

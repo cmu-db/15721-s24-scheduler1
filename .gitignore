@@ -24,3 +24,4 @@ scheduler/src/example_data/spilltest
 scheduler/src/example_data/test_csv_abort
 scheduler/src/example_data/test_csv_conc_async
 scheduler/src/example_data/test_spill_test_part
+scheduler/src/example_data/query_*

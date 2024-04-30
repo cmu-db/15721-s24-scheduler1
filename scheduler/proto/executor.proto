@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package executor_interface;
 
+// Arguments for the ExecuteQuery RPC.
 message ExecuteQueryArgs {
     // The query fragment identifier.
     int32 fragment_id = 1;

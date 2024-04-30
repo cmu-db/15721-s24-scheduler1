@@ -47,15 +47,15 @@ message ScheduleQueryRet {
     // The identifier to refer to this query execution.
     int32 query_id = 1;
 
-
     // The path info for intermediate files
     bytes file_scan_config = 2;
 
     // The status of query execution.
     //QueryStatus status = 3;
 
-    // TODO
-    // enqueue_time
+    // The time the query was scheduled for execution in miliseconds since
+    // the Unix epoch.
+    uint64 enqueue_time = 3;
 
     // TODO
     // finish_time
@@ -83,13 +83,14 @@ message QueryExecutionDoneArgs {
 
     // The path info for intermediate files
     bytes file_scan_config = 3;
-    
+
     // Whether the file is root
     bool root = 4;
 
     // Query id of the whole plan
     int32 query_id = 5;
 
+    bool generated_hash_table = 6;
 }
 
 // Information returned from the QueryExecutionDone RPC.
@@ -100,16 +101,13 @@ message QueryExecutionDoneRet {
 
 }
 
-message RegisterExecutorArgs {
-    int32 port = 1;
-}
-
-message RegisterExecutorRet {
-
-}
-
 message GetQueryArgs {
 
+}
+
+message HashBuildDataInfo {
+    bytes path_from_parent = 1;
+    int32 build_fragment_id = 2;
 }
 
 message GetQueryRet {
@@ -121,8 +119,9 @@ message GetQueryRet {
 
     bool root = 4;
 
-    bool aborted = 5;
+    repeated HashBuildDataInfo hash_build_data_info = 5;
 
+    bool aborted = 6;
 }
 
 message AbortQueryArgs {
@@ -133,15 +132,13 @@ message AbortQueryRet {
 }
 
 // The scheduler interface.
-service SchedulerService {
+service Scheduler {
 
     // Used by the optimizer to schedule a new query.
     rpc ScheduleQuery(ScheduleQueryArgs) returns (ScheduleQueryRet);
 
     // Used by the optimizer to query the status of a job.
     rpc QueryJobStatus(QueryJobStatusArgs) returns (QueryJobStatusRet);
-
-    rpc RegisterExecutor(RegisterExecutorArgs) returns (RegisterExecutorRet);
 
     rpc GetQuery(GetQueryArgs) returns (GetQueryRet);
 

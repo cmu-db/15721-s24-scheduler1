@@ -6,19 +6,19 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "lib"
+name = "chronos"
 path = "src/lib.rs"
 
 [[bin]]
-name = "scheduler-api-server"
-path = "src/proto_server.rs"
+name = "scheduler-service"
+path = "src/scheduler_service.rs"
 
 [[bin]]
-name = "executor"
+name = "executor-service"
 path = "src/executor.rs"
 
 [[bin]]
-name = "cli"
+name = "scheduler-cli"
 path = "src/cli.rs"
 
 [[bin]]
@@ -41,6 +41,9 @@ futures = "0.3.30"
 anyhow = "1.0.82"
 clap = "4.5.4"
 bytes = "0.4.12"
+ahash = "0.8.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 serial_test = "3.1.1"
 
 [build-dependencies]

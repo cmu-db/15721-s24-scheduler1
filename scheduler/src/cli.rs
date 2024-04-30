@@ -1,16 +1,16 @@
+use chronos::integration::scan_from_parquet;
+use chronos::scheduler_interface::scheduler_client::SchedulerClient;
 use datafusion_proto::protobuf::FileScanExecConf;
-use lib::integration::scan_from_parquet;
-use lib::scheduler_interface::scheduler_service_client::SchedulerServiceClient;
 
 use bytes::IntoBuf;
+use chronos::debug_println;
+use chronos::scheduler_interface::{QueryInfo, ScheduleQueryArgs};
 use datafusion::arrow::{array::RecordBatch, util::pretty};
 use datafusion::physical_plan;
 use datafusion::prelude::*;
 use datafusion_proto::bytes::physical_plan_to_bytes;
 use datafusion_proto::physical_plan::from_proto;
 use futures::stream::TryStreamExt;
-use lib::debug_println;
-use lib::scheduler_interface::{QueryInfo, ScheduleQueryArgs};
 use prost::Message;
 use std::io::{self, Write};
 
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         panic!("Scheduler port environment variable not set");
     });
     let uri = format!("http://[::1]:{scheduler_service_port}");
-    let mut client = SchedulerServiceClient::connect(uri.clone())
+    let mut client = SchedulerClient::connect(uri.clone())
         .await
         .unwrap_or_else(|error| {
             panic!("Unable to connect to the scheduler instance: {:?}", error);

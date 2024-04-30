@@ -1,16 +1,16 @@
+use chronos::integration::scan_from_parquet;
+use chronos::scheduler_interface::scheduler_client::SchedulerClient;
 use datafusion_proto::protobuf::FileScanExecConf;
-use lib::integration::scan_from_parquet;
-use lib::scheduler_interface::scheduler_service_client::SchedulerServiceClient;
 
 use bytes::IntoBuf;
 
+use chronos::debug_println;
+use chronos::scheduler_interface::{QueryInfo, ScheduleQueryArgs};
 use datafusion::physical_plan;
 use datafusion::prelude::*;
 use datafusion_proto::bytes::physical_plan_to_bytes;
 use datafusion_proto::physical_plan::from_proto;
 use futures::stream::TryStreamExt;
-use lib::debug_println;
-use lib::scheduler_interface::{QueryInfo, ScheduleQueryArgs};
 use prost::Message;
 
 use std::time::Instant;
@@ -52,8 +52,8 @@ async fn run_and_time_bench(query_num: u32, num_runs: u32) -> f64 {
         panic!("Scheduler port environment variable not set");
     });
     let uri = format!("http://[::1]:{scheduler_service_port}");
-    let mut client: SchedulerServiceClient<tonic::transport::Channel> =
-        SchedulerServiceClient::connect(uri.clone())
+    let mut client: SchedulerClient<tonic::transport::Channel> =
+        SchedulerClient::connect(uri.clone())
             .await
             .unwrap_or_else(|error| {
                 panic!("Unable to connect to the scheduler instance: {:?}", error);
