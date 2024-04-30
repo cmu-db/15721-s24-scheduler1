@@ -87,7 +87,9 @@ message QueryExecutionDoneArgs {
     // Whether the file is root
     bool root = 4;
 
-    int32 query_id = 5;
+    uint64 join_data_ptr = 5;
+
+    int32 query_id = 6;
 }
 
 // Information returned from the QueryExecutionDone RPC.

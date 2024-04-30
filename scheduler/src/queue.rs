@@ -111,19 +111,19 @@ pub fn update_plan_parent(
             if path.len() == 2 {
                 if let Some(node) = child.as_any().downcast_ref::<HashJoinExec>() {
                     let probe_side = node.right().clone();
-                    return Arc::new(
-                        HashProbeExec::try_new(
-                            probe_side,
-                            node.on,
-                            node.filter,
-                            &node.join_type,
-                            node.projection,
-                            node.mode,
-                            node.null_equals_null,
-                            //node.join_data,
-                        )
-                        .unwrap(),
-                    );
+                    // return Arc::new(
+                    //     HashProbeExec::try_new(
+                    //         probe_side,
+                    //         node.on,
+                    //         node.filter,
+                    //         &node.join_type,
+                    //         node.projection,
+                    //         node.mode,
+                    //         node.null_equals_null,
+                    //         //node.join_data,
+                    //     )
+                    //     .unwrap(),
+                    // );
                 }
             }
             new_children.push(update_plan_parent(child, &path[1..], query_result));

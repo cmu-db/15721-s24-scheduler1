@@ -2,10 +2,12 @@ use chronos::executor_interface::executor_service_server::ExecutorService;
 use chronos::executor_interface::{ExecuteQueryArgs, ExecuteQueryRet};
 use chronos::scheduler_interface::scheduler_client::SchedulerClient;
 use datafusion::datasource::physical_plan::FileScanConfig;
+use datafusion::execution::memory_pool::MemoryConsumer;
 use datafusion::execution::TaskContext;
 use datafusion::physical_expr::PhysicalExprRef;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion::physical_plan::joins::utils::JoinHashMap;
+use datafusion::physical_plan::joins::JoinLeftData;
 use datafusion::physical_plan::joins::{update_hash, HashBuildExec};
 use datafusion_common::arrow::compute::concat_batches;
 
@@ -14,7 +16,9 @@ use datafusion_common::DataFusionError;
 use datafusion_proto::bytes::physical_plan_from_bytes;
 use datafusion_proto::protobuf::FileScanExecConf;
 
-use chronos::scheduler_interface::{GetQueryArgs, GetQueryRet, QueryExecutionDoneArgs};
+use chronos::scheduler_interface::{
+    GetQueryArgs, GetQueryRet, QueryExecutionDoneArgs, QueryStatus,
+};
 use futures::TryStreamExt;
 use tokio::runtime::Handle;
 use tokio::sync::RwLock;
@@ -34,11 +38,15 @@ use std::env;
 
 use chronos::debug_println;
 
+enum QueryResult {
+    Config(FileScanConfig),
+    Data(JoinLeftData),
+}
+
 /// An entity that executes query plans.
 #[derive(Debug, Default)]
 pub struct Executor {
     random_state: RandomState,
-    hash_tables: Arc<RwLock<HashMap<i32, JoinHashMap>>>,
 }
 use datafusion::physical_plan::{self, ExecutionPlan};
 
@@ -55,20 +63,12 @@ impl ExecutorService for Executor {
     }
 }
 
-/// HashTable and input data for the left (build side) of a join
-struct JoinLeftData {
-    /// The hash table with indices into `batch`
-    hash_map: JoinHashMap,
-    /// The input rows for the build side
-    batch: RecordBatch,
-}
-
 impl Executor {
     async fn process_fragment(
         &self,
         get_query_response: GetQueryRet,
         ctx: &SessionContext,
-    ) -> FileScanConfig {
+    ) -> QueryResult {
         let wd = env::current_dir().unwrap();
         let wd_str = wd.to_str().unwrap();
 
@@ -83,14 +83,14 @@ impl Executor {
         if let Some(node) = process_plan.as_any().downcast_ref::<HashBuildExec>() {
             let input = node.input().clone();
             let on = node.on.clone();
-            let hash_table = self
+            let join_data = self
                 .build_hash_table(None, input, context.clone(), on)
                 .await
                 .expect("Failed to build a hash table");
-            self.hash_tables
-                .write()
-                .await
-                .insert(fragment_id, hash_table);
+            // self.hash_tables
+            //     .write()
+            //     .await
+            //     .insert(fragment_id, hash_table);
         }
         let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
 
@@ -106,7 +106,10 @@ impl Executor {
         )
         .await
         .unwrap();
-        local_file_config(output_schema, intermediate_output.as_str())
+        QueryResult::Config(local_file_config(
+            output_schema,
+            intermediate_output.as_str(),
+        ))
     }
 
     async fn build_hash_table(
@@ -115,7 +118,7 @@ impl Executor {
         node: Arc<dyn ExecutionPlan>,
         context: Arc<TaskContext>,
         on: Vec<PhysicalExprRef>,
-    ) -> Result<JoinHashMap, DataFusionError> {
+    ) -> Result<JoinLeftData, DataFusionError> {
         let schema = node.schema();
 
         let (node_input, node_input_partition) = if let Some(partition) = partition {
@@ -167,8 +170,15 @@ impl Executor {
             offset += batch.num_rows();
         }
         let single_batch = concat_batches(&schema, batches_iter)?;
+        let reservation =
+            MemoryConsumer::new(format!("HashJoinProbe")).register(context.memory_pool());
+        let data = JoinLeftData::new(
+            hashmap,
+            single_batch,
+            node_input.output_partitioning().clone(),
+        );
 
-        Ok(hashmap)
+        Ok(data)
     }
 
     async fn initialize(&self, port: i32) {
@@ -198,16 +208,33 @@ impl Executor {
                         continue;
                     }
 
-                    let interm_file = self.process_fragment(response.clone(), &ctx).await;
-                    let interm_proto = FileScanExecConf::try_from(&interm_file).unwrap();
+                    let result = self.process_fragment(response.clone(), &ctx).await;
 
-                    let finished_request = tonic::Request::new(QueryExecutionDoneArgs {
-                        fragment_id: response.fragment_id,
-                        status: 0,
-                        file_scan_config: interm_proto.encode_to_vec(),
-                        root: response.root,
-                        query_id: response.query_id,
-                    });
+                    let mut finished_request: tonic::Request<QueryExecutionDoneArgs>;
+
+                    match result {
+                        QueryResult::Config(config) => {
+                            let interm_proto = FileScanExecConf::try_from(&config).unwrap();
+                            finished_request = tonic::Request::new(QueryExecutionDoneArgs {
+                                fragment_id: response.fragment_id,
+                                status: QueryStatus::Done.into(),
+                                file_scan_config: interm_proto.encode_to_vec(),
+                                root: response.root,
+                                query_id: response.query_id,
+                                join_data_ptr: 0,
+                            });
+                        }
+                        QueryResult::Data(data) => {
+                            finished_request = tonic::Request::new(QueryExecutionDoneArgs {
+                                fragment_id: response.fragment_id,
+                                status: QueryStatus::Done.into(),
+                                file_scan_config: vec![],
+                                root: response.root,
+                                query_id: response.query_id,
+                                join_data_ptr: Box::into_raw(Box::new(data)) as u64,
+                            });
+                        }
+                    };
 
                     match client.query_execution_done(finished_request).await {
                         Err(e) => {
@@ -248,14 +275,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handles = Vec::new();
     let base_port = 5555;
 
-    let hash_tables = Arc::new(RwLock::new(HashMap::new()));
-
     for i in 0..num_workers {
-        let hash_tables_clone = hash_tables.clone();
         handles.push(tokio::spawn(async move {
             let executor = Executor {
                 random_state: RandomState::with_seeds(0, 0, 0, 0),
-                hash_tables: hash_tables_clone,
             };
             executor.initialize(base_port + i).await;
         }));
