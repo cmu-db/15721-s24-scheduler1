@@ -41,12 +41,14 @@ Viewing the physical plan as a directed acyclic graph (DAG), we generate query f
 Our current implementation focuses on tree-shaped queries, but it can be easily extended to accommodate multiple parents. Due to the way we store intermediate results, we only need to execute a common child once. In the naive parsing approach, we create query plan fragments by marking boundaries whenever a node has more than one child, dividing it into three fragments. We inject placeholder scan nodes at fragment boundaries into the parent fragment, with the child nodes becoming the starting points of new query fragments. As the child fragments are processed and their results returned (assuming parquet formats), we update the injected scan nodes to become table scan operators on the intermediate results.
 
 Here's a diagram illustrating the naive parsing approach:
+
 ![](images/status_update.png)
 
 
 For the advanced variant, we split the plan into two fragments, as shown in the diagram below. Currently, we only support advanced parsing for hash joins, but our parser can be extended to handle other operators. This split allows us to create a longer pipeline, with the hash probe operator (and its children) as part of the parent fragment.
 
 Here's a diagram illustrating the advanced parsing approach:
+
 ![](images/Untitled%20Diagram.drawio.png)
 
 
@@ -267,5 +269,7 @@ While sending the error directly back to the client is more efficient, the clien
 
 ## References
 https://docs.rs/datafusion/latest/datafusion/
+
 https://pages.cs.wisc.edu/~jignesh/publ/Quickstep.pdf
+
 https://db.in.tum.de/~leis/papers/morsels.pdf
