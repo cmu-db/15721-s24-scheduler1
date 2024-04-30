@@ -19,6 +19,7 @@ use chronos::scheduler_interface::{
 };
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
+use tonic::transport::Channel;
 use tonic::Code;
 
 use ahash::RandomState;
@@ -229,23 +230,38 @@ impl Executor {
         plan.with_new_children(new_children).unwrap()
     }
 
-    async fn initialize(&self, port: i32, delete_intermediate: bool) {
+    /// Initialize the executor with `worker_id` by connecting to the scheduler. `delete_intermediate` indicates
+    /// whether intermediate files should be deleted.
+    async fn initialize(&self, worker_id: i32, delete_intermediate: bool) {
         let scheduler_service_port = env::var("SCHEDULER_PORT").unwrap_or_else(|_error| {
             panic!("Scheduler port environment variable not set");
         });
         let uri = format!("http://[::1]:{scheduler_service_port}");
-        let mut client = SchedulerClient::connect(uri.clone())
+        let client = SchedulerClient::connect(uri.clone())
             .await
             .unwrap_or_else(|error| {
                 panic!("Unable to connect to the scheduler instance: {:?}", error);
             });
 
         debug_println!(
-            "executor at port {port} connected to the scheduler at {}",
+            "executor {worker_id} connected to the scheduler at {}",
             &uri
         );
-        let ctx = SessionContext::new();
 
+        self.executor_loop(client, delete_intermediate, worker_id)
+            .await;
+    }
+
+    /// Run the executor loop for the executor to poll the `client` for new query fragments to execute.
+    ///
+    /// `delete_intermediate` indicates whether intermediate files should be deleted.
+    async fn executor_loop(
+        &self,
+        mut client: SchedulerClient<Channel>,
+        delete_intermediate: bool,
+        worker_id: i32,
+    ) {
+        let ctx = SessionContext::new();
         loop {
             let get_request = tonic::Request::new(GetQueryArgs {});
             match client.get_query(get_request).await {
@@ -315,7 +331,7 @@ impl Executor {
                 Err(e) => match e.code() {
                     Code::Unavailable => {
                         debug_println!("get_query rpc unsuccessful: {:?}", e);
-                        debug_println!("executor on port {port} is exiting");
+                        debug_println!("executor {worker_id} is exiting");
                         break;
                     }
                     _ => {
@@ -343,7 +359,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut handles = Vec::new();
-    let base_port = 5555;
 
     let generated_hash_tables = Arc::new(RwLock::new(HashMap::new()));
 
@@ -354,9 +369,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 random_state: RandomState::with_seeds(0, 0, 0, 0),
                 generated_hash_tables,
             };
-            executor
-                .initialize(base_port + i, delete_intermediate)
-                .await;
+            executor.initialize(i, delete_intermediate).await;
         }));
     }
 

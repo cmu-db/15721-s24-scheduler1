@@ -107,8 +107,33 @@ impl Scheduler {
         unimplemented!()
     }
 
-    pub fn query_execution_done(&self, _fragment_id: i32, _query_status: QueryStatus) {
-        unimplemented!()
+    /// Marks the completion of the execution of `fragment_id` belonging to `query_id`.
+    ///
+    /// `is_root_fragment` indicates that the fragment is the root fragment of the query, implying the completion of
+    /// the entire query. `file_scan_config` and `file_scan_config_bytes` contain information to retrieve the output
+    /// of the query.
+    pub async fn query_execution_done(
+        &self,
+        query_id: i32,
+        fragment_id: i32,
+        file_scan_config: FileScanConfig,
+        file_scan_config_bytes: Vec<u8>,
+        is_root_fragment: bool,
+    ) -> Vec<String> {
+        let to_delete = self
+            .finish_fragment(
+                fragment_id.try_into().unwrap(),
+                QueryResult::ParquetExec(file_scan_config.clone()),
+                file_scan_config.file_groups,
+            )
+            .await;
+
+        if is_root_fragment {
+            if let Some(tx) = self.query_result_senders.write().await.remove(&query_id) {
+                tx.send(file_scan_config_bytes).await.unwrap();
+            }
+        }
+        to_delete
     }
 
     pub fn parse_physical_plan(&self, _physical_plan: &dyn ExecutionPlan) {}

@@ -155,38 +155,31 @@ impl Scheduler for MyScheduler {
         let request_content = request.into_inner();
         let fragment_id = request_content.fragment_id;
         let query_status = QueryStatus::try_from(request_content.status);
-        let file_scan_exec_conf =
-            FileScanExecConf::decode(request_content.file_scan_config.clone().into_buf()).unwrap();
-        let file_scan_conf = from_proto::parse_protobuf_file_scan_config(
-            &file_scan_exec_conf,
-            &SessionContext::new(),
-        )
-        .unwrap();
 
         if query_status.is_err() {
             let status = Status::new(Code::InvalidArgument, "Query status not specified");
             return Err(status);
         }
 
-        let to_delete = chronos::scheduler::SCHEDULER_INSTANCE
-            .finish_fragment(
-                fragment_id.try_into().unwrap(),
-                chronos::scheduler::QueryResult::ParquetExec(file_scan_conf.clone()),
-                file_scan_conf.file_groups,
+        let file_scan_exec_conf =
+            FileScanExecConf::decode(request_content.file_scan_config.clone().into_buf()).unwrap();
+        let file_scan_config = from_proto::parse_protobuf_file_scan_config(
+            &file_scan_exec_conf,
+            &SessionContext::new(),
+        )
+        .unwrap();
+        let query_id = request_content.query_id;
+        let is_root_fragment = request_content.root;
+
+        let to_delete = SCHEDULER_INSTANCE
+            .query_execution_done(
+                query_id,
+                fragment_id,
+                file_scan_config,
+                request_content.file_scan_config,
+                is_root_fragment,
             )
             .await;
-
-        if request_content.root {
-            // let mut scheduler = SCHEDULER_INSTANCE.lock().await;
-            if let Some(tx) = SCHEDULER_INSTANCE
-                .query_result_senders
-                .write()
-                .await
-                .remove(&request_content.query_id)
-            {
-                tx.send(request_content.file_scan_config).await.unwrap();
-            }
-        }
 
         let reply = QueryExecutionDoneRet {
             intermediate_files: to_delete,
