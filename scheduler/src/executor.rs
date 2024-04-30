@@ -29,12 +29,12 @@ use core::time;
 use datafusion::physical_plan::ExecutionPlanProperties;
 use datafusion::prelude::*;
 // use lib::integration::{local_file_config, local_filegroup_config, spill_records_to_disk};
+use chronos::integration::local_filegroup_config;
 use prost::Message;
 use std::collections::HashMap;
+use std::env;
 use std::sync::Arc;
 use std::thread::sleep;
-use chronos::integration::local_filegroup_config;
-use std::env;
 
 use chronos::debug_println;
 
@@ -101,11 +101,11 @@ impl Executor {
                 .insert(fragment_id, join_data);
         }
 
-    if get_query_response.aborted {
-        return QueryResult::Config(local_file_config(output_schema, ""));
-    }
+        if get_query_response.aborted {
+            return QueryResult::Config(local_file_config(output_schema, ""));
+        }
 
-    let context = ctx.state().task_ctx();
+        let context = ctx.state().task_ctx();
 
         // If we need to add a precomputed hash table to a hash probe exec node
         for hash_build_info in get_query_response.hash_build_data_info {
@@ -141,10 +141,7 @@ impl Executor {
         .await
         .unwrap();
 
-        QueryResult::Config(local_filegroup_config(
-            output_schema,
-            fg,
-        ))
+        QueryResult::Config(local_filegroup_config(output_schema, fg))
     }
 
     async fn build_hash_table(
