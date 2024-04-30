@@ -338,7 +338,7 @@ async fn create_build_fragment(
 
     Arc::new(
         HashProbeExec::try_new(
-            node.right.clone(),
+            parsed_probe_side,
             node.on.clone(),
             node.filter.clone(),
             &node.join_type,
