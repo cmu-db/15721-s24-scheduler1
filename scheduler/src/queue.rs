@@ -267,10 +267,10 @@ mod tests {
     use datafusion_expr::{col, lit, LogicalPlan};
 
     use more_asserts as ma;
+    use serial_test::serial;
     use std::collections::HashMap;
     use std::collections::HashSet;
     use std::sync::Arc;
-    use serial_test::serial;
 
     async fn create_physical_plan(logical_plan: LogicalPlan) -> Result<Arc<dyn ExecutionPlan>> {
         // Set default for all context
