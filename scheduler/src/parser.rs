@@ -350,7 +350,7 @@ async fn create_build_fragment(
             node.schema(),
             node.column_indices.clone(),
             node.properties().clone(),
-            stats
+            stats,
         )
         .unwrap(),
     )
