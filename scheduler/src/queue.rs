@@ -2,7 +2,10 @@ use crate::{
     parser::{QueryFragment, QueryFragmentId},
     scheduler::{QueryResult, SCHEDULER_INSTANCE},
 };
-use datafusion::config::TableParquetOptions;
+use datafusion::{
+    config::TableParquetOptions,
+    physical_plan::joins::{HashJoinExec, HashProbeExec},
+};
 use datafusion::{
     datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
     physical_plan::joins::HashBuildExec,
@@ -105,6 +108,24 @@ pub fn update_plan_parent(
         if i != path[0] {
             new_children.push(child);
         } else {
+            if path.len() == 2 {
+                if let Some(node) = child.as_any().downcast_ref::<HashJoinExec>() {
+                    let probe_side = node.right().clone();
+                    return Arc::new(
+                        HashProbeExec::try_new(
+                            probe_side,
+                            node.on,
+                            node.filter,
+                            &node.join_type,
+                            node.projection,
+                            node.mode,
+                            node.null_equals_null,
+                            //node.join_data,
+                        )
+                        .unwrap(),
+                    );
+                }
+            }
             new_children.push(update_plan_parent(child, &path[1..], query_result));
         }
         i += 1;
@@ -112,17 +133,19 @@ pub fn update_plan_parent(
     root.with_new_children(new_children).unwrap()
 }
 
-pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result: QueryResult) {
+/// Marks the completion of the execution of the query fragment with
+/// `fragment_id` with result `fragment_result`.
+pub async fn finish_fragment(fragment_id: QueryFragmentId, fragment_result: QueryResult) {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
     let parent_fragment_ids = all_fragments
-        .get(&child_fragment_id)
+        .get(&fragment_id)
         .unwrap()
         .parent_fragments
         .clone();
 
     let parent_fragment_paths = all_fragments
-        .get(&child_fragment_id)
+        .get(&fragment_id)
         .unwrap()
         .parent_path_from_root
         .clone();
@@ -142,13 +165,13 @@ pub async fn finish_fragment(child_fragment_id: QueryFragmentId, fragment_result
 
         parent_fragment
             .child_fragments
-            .retain(|x| *x != child_fragment_id);
+            .retain(|x| *x != fragment_id);
         if parent_fragment.child_fragments.is_empty() {
             parent_fragment.enqueued_time = Some(SystemTime::now());
             new_ids_to_push.push(id);
         }
     }
-    all_fragments.remove(&child_fragment_id);
+    all_fragments.remove(&fragment_id);
     pending_fragments.extend(new_ids_to_push);
     debug_println!(
         "Updated finished fragments, {} left available to be executed in pending queue",

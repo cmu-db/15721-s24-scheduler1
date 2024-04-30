@@ -77,6 +77,8 @@ impl Scheduler {
         }
     }
 
+    /// Marks the completion of the execution of the query fragment with
+    /// `fragment_id` with result `fragment_result`.
     pub async fn finish_fragment(
         &self,
         child_fragment_id: QueryFragmentId,

@@ -170,9 +170,9 @@ pub async fn parse_into_fragments(
 
     // If we encounter a hash build execution node we should execute the build
     // side as a separate fragment.
-    if let Some(node) = root.as_any().downcast_ref::<HashJoinExec>() {
+    if let Some(_) = root.as_any().downcast_ref::<HashJoinExec>() {
         return create_build_fragment(
-            node,
+            root,
             fragment_id,
             output,
             query_id,
@@ -264,7 +264,7 @@ async fn create_child_fragments(
 /// Returns a new [`ExecutionPlan`] that represents the results of executing
 /// this hash join.
 async fn create_build_fragment(
-    node: &HashJoinExec,
+    arc_node: Arc<dyn ExecutionPlan>,
     fragment_id: QueryFragmentId,
     output: &mut HashMap<QueryFragmentId, QueryFragment>,
     query_id: u64,
@@ -272,6 +272,7 @@ async fn create_build_fragment(
     priority: i64,
     pipelined: bool,
 ) -> Arc<dyn ExecutionPlan> {
+    let node = arc_node.as_any().downcast_ref::<HashJoinExec>().unwrap();
     let build_side = node.left.clone();
 
     // Create the build fragment with default parameters and add it to
@@ -335,17 +336,18 @@ async fn create_build_fragment(
     )
     .await;
 
-    let new_root = HashProbeExec::try_new(
-        parsed_build_side,
-        parsed_probe_side,
-        node.on.clone(),
-        node.filter.clone(),
-        &node.join_type,
-        None,
-        node.mode,
-        node.null_equals_null,
-    );
-    return Arc::new(new_root.unwrap());
+    // let new_root = HashProbeExec::try_new(
+    //     parsed_build_side,
+    //     parsed_probe_side,
+    //     node.on.clone(),
+    //     node.filter.clone(),
+    //     &node.join_type,
+    //     None,
+    //     node.mode,
+    //     node.null_equals_null,
+    // );
+    let new_root = arc_node.with_new_children(vec![parsed_build_side, parsed_probe_side]);
+    new_root.unwrap()
 }
 
 /// Dummy Scan nodes will created using [`plan`], attached to its parents.

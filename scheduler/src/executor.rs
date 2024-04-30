@@ -5,11 +5,11 @@ use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion::execution::TaskContext;
 use datafusion::physical_expr::PhysicalExprRef;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
-use datafusion::physical_plan::joins::utils::{JoinHashMap, JoinHashMapType};
+use datafusion::physical_plan::joins::utils::JoinHashMap;
 use datafusion::physical_plan::joins::{update_hash, HashBuildExec};
 use datafusion_common::arrow::compute::concat_batches;
+
 use datafusion_common::arrow::record_batch::RecordBatch;
-use datafusion_common::hash_utils::create_hashes;
 use datafusion_common::DataFusionError;
 use datafusion_proto::bytes::physical_plan_from_bytes;
 use datafusion_proto::protobuf::FileScanExecConf;
@@ -17,6 +17,7 @@ use datafusion_proto::protobuf::FileScanExecConf;
 use chronos::scheduler_interface::{GetQueryArgs, GetQueryRet, QueryExecutionDoneArgs};
 use futures::TryStreamExt;
 use tokio::runtime::Handle;
+use tokio::sync::RwLock;
 use tonic::{Code, Request, Response, Status};
 
 use ahash::RandomState;
@@ -25,6 +26,7 @@ use core::time;
 use datafusion::physical_plan::ExecutionPlanProperties;
 use datafusion::prelude::*;
 use prost::Message;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::sleep;
 
@@ -36,6 +38,7 @@ use chronos::debug_println;
 #[derive(Debug, Default)]
 pub struct Executor {
     random_state: RandomState,
+    hash_tables: Arc<RwLock<HashMap<i32, JoinHashMap>>>,
 }
 use datafusion::physical_plan::{self, ExecutionPlan};
 
@@ -50,6 +53,14 @@ impl ExecutorService for Executor {
         let reply = ExecuteQueryRet {};
         Ok(Response::new(reply))
     }
+}
+
+/// HashTable and input data for the left (build side) of a join
+struct JoinLeftData {
+    /// The hash table with indices into `batch`
+    hash_map: JoinHashMap,
+    /// The input rows for the build side
+    batch: RecordBatch,
 }
 
 impl Executor {
@@ -68,10 +79,18 @@ impl Executor {
         let output_schema = process_plan.schema();
         let context = ctx.state().task_ctx();
 
+        // If this plan requires us to build a hash table.
         if let Some(node) = process_plan.as_any().downcast_ref::<HashBuildExec>() {
             let input = node.input().clone();
             let on = node.on.clone();
-            self.build_hash_table(None, input, context.clone(), on);
+            let hash_table = self
+                .build_hash_table(None, input, context.clone(), on)
+                .await
+                .expect("Failed to build a hash table");
+            self.hash_tables
+                .write()
+                .await
+                .insert(fragment_id, hash_table);
         }
         let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
 
@@ -135,7 +154,7 @@ impl Executor {
         for batch in batches_iter.clone() {
             hashes_buffer.clear();
             hashes_buffer.resize(batch.num_rows(), 0);
-            update_hash(
+            let _ = update_hash(
                 &on,
                 batch,
                 &mut hashmap,
@@ -229,12 +248,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handles = Vec::new();
     let base_port = 5555;
 
-    let _handle = Handle::current;
+    let hash_tables = Arc::new(RwLock::new(HashMap::new()));
 
     for i in 0..num_workers {
+        let hash_tables_clone = hash_tables.clone();
         handles.push(tokio::spawn(async move {
             let executor = Executor {
                 random_state: RandomState::with_seeds(0, 0, 0, 0),
+                hash_tables: hash_tables_clone,
             };
             executor.initialize(base_port + i).await;
         }));
