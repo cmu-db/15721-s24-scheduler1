@@ -258,6 +258,7 @@ mod tests {
 
     use more_asserts as ma;
     use std::collections::HashMap;
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     async fn create_physical_plan(logical_plan: LogicalPlan) -> Result<Arc<dyn ExecutionPlan>> {
