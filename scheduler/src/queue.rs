@@ -270,6 +270,7 @@ mod tests {
     use std::collections::HashMap;
     use std::collections::HashSet;
     use std::sync::Arc;
+    use serial_test::serial;
 
     async fn create_physical_plan(logical_plan: LogicalPlan) -> Result<Arc<dyn ExecutionPlan>> {
         // Set default for all context
@@ -331,6 +332,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn sanity_check() {
         let physical_plan = build_toy_physical_plan().await.unwrap();
         println!("Physical Plan: {:#?}", physical_plan);
@@ -419,6 +421,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn basic_test() {
         let physical_plan = build_basic_physical_plan().await.unwrap();
         println!("Physical Plan: {:#?}", physical_plan);
@@ -490,6 +493,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn abort_test() {
         let physical_plan = build_basic_physical_plan().await.unwrap();
         println!("Physical Plan: {:#?}", physical_plan);
