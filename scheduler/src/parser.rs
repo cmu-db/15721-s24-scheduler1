@@ -336,18 +336,20 @@ async fn create_build_fragment(
     )
     .await;
 
-    // let new_root = HashProbeExec::try_new(
-    //     parsed_build_side,
-    //     parsed_probe_side,
-    //     node.on.clone(),
-    //     node.filter.clone(),
-    //     &node.join_type,
-    //     None,
-    //     node.mode,
-    //     node.null_equals_null,
-    // );
-    let new_root = arc_node.with_new_children(vec![parsed_build_side, parsed_probe_side]);
-    new_root.unwrap()
+    Arc::new(
+        HashProbeExec::try_new(
+            node.right.clone(),
+            node.on.clone(),
+            node.filter.clone(),
+            &node.join_type,
+            node.projection.clone(),
+            node.mode,
+            node.null_equals_null,
+            node.schema(),
+            node.column_indices.clone(),
+        )
+        .unwrap(),
+    )
 }
 
 /// Dummy Scan nodes will created using [`plan`], attached to its parents.

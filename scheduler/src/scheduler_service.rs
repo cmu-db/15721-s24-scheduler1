@@ -42,6 +42,7 @@ impl Scheduler for MyScheduler {
                             fragment_id: i32::try_from(p.fragment_id).unwrap(),
                             physical_plan: p_bytes.to_vec(),
                             root: p.parent_fragments.is_empty(),
+                            hash_build_data_info: vec![],
                         };
                         Ok(Response::new(reply))
                     }
@@ -53,6 +54,7 @@ impl Scheduler for MyScheduler {
                             fragment_id: -1,
                             physical_plan: vec![],
                             root: true, // setting this to true frees the CLI on the tokio channel, will do for now
+                            hash_build_data_info: vec![],
                         };
                         Ok(Response::new(reply))
                     }
@@ -64,6 +66,7 @@ impl Scheduler for MyScheduler {
                     fragment_id: -1,
                     physical_plan: vec![],
                     root: false,
+                    hash_build_data_info: vec![],
                 };
                 Ok(Response::new(reply))
             }
@@ -105,7 +108,13 @@ impl Scheduler for MyScheduler {
         let reply = ScheduleQueryRet {
             query_id: sched_info.query_id,
             file_scan_config: rx.recv().await.unwrap_or_default(),
-            enqueue_time: sched_info.enqueue_time.duration_since(UNIX_EPOCH).unwrap().as_millis().try_into().unwrap()
+            enqueue_time: sched_info
+                .enqueue_time
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                .try_into()
+                .unwrap(),
         };
         Ok(Response::new(reply))
     }

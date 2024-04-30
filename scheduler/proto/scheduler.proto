@@ -87,9 +87,9 @@ message QueryExecutionDoneArgs {
     // Whether the file is root
     bool root = 4;
 
-    uint64 join_data_ptr = 5;
+    int32 query_id = 5;
 
-    int32 query_id = 6;
+    bool generated_hash_table = 6;
 }
 
 // Information returned from the QueryExecutionDone RPC.
@@ -101,6 +101,11 @@ message GetQueryArgs {
 
 }
 
+message HashBuildDataInfo {
+    bytes path_from_parent = 1;
+    int32 build_fragment_id = 2;
+}
+
 message GetQueryRet {
     int32 query_id = 1;
 
@@ -110,6 +115,7 @@ message GetQueryRet {
 
     bool root = 4;
 
+    repeated HashBuildDataInfo hash_build_data_info = 5;
 }
 
 // The scheduler interface.

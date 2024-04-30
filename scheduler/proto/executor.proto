@@ -9,9 +9,6 @@ message ExecuteQueryArgs {
 
     // The physical plan for the query.
     bytes physical_plan = 2;
-
-    // Build a hash table with the results.
-    bool build_hash_table = 3;
 }
 
 message ExecuteQueryRet {
