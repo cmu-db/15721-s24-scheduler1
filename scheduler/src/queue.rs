@@ -345,6 +345,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn sanity_check() {
+        clear_queue().await;
         let physical_plan = build_toy_physical_plan().await.unwrap();
         println!("Physical Plan: {:#?}", physical_plan);
         assert_eq!(physical_plan.children().len(), 1);
@@ -434,6 +435,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn basic_test() {
+        clear_queue().await;
         let physical_plan = build_basic_physical_plan().await.unwrap();
         println!("Physical Plan: {:#?}", physical_plan);
         validate_basic_physical_plan_structure(&physical_plan);

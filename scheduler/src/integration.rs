@@ -213,7 +213,7 @@ pub async fn spin_up(
 mod tests {
     use crate::integration::*;
     use crate::parser;
-    use crate::queue;
+    use crate::queue::{self, clear_queue};
     use datafusion::arrow::array::RecordBatch;
     use datafusion::arrow::compute::kernels::concat;
     use datafusion::arrow::ipc;
@@ -406,8 +406,8 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    #[ignore] // serial is not working as intended here when tested as a suite with tokio
     async fn csv_query() -> Result<(), Box<dyn error::Error>> {
+        clear_queue().await;
         let abs_path = std::fs::canonicalize(".")?;
         let abs_path_str = abs_path.to_str().unwrap();
 
@@ -494,6 +494,7 @@ mod tests {
 
     #[tokio::test]
     async fn csv_query_queue_api_multi_async() -> Result<(), Box<dyn error::Error>> {
+        clear_queue().await;
         let abs_path = std::fs::canonicalize(".")?;
         let abs_path_str = abs_path.to_str().unwrap();
         let abs_path_string = abs_path_str.to_string();
@@ -544,6 +545,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn csv_abort() -> Result<(), Box<dyn error::Error>> {
+        clear_queue().await;
         let abs_path = std::fs::canonicalize(".")?;
         let abs_path_str = abs_path.to_str().unwrap();
         let abs_path_string = abs_path_str.to_string();
