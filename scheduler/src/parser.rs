@@ -170,7 +170,7 @@ pub async fn parse_into_fragments(
 
     // If we encounter a hash build execution node we should execute the build
     // side as a separate fragment.
-    if let Some(_) = root.as_any().downcast_ref::<HashJoinExec>() {
+    if root.as_any().downcast_ref::<HashJoinExec>().is_some() {
         return create_build_fragment(
             root,
             fragment_id,

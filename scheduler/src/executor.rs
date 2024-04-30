@@ -17,7 +17,7 @@ use datafusion_proto::bytes::physical_plan_from_bytes;
 use datafusion_proto::protobuf::FileScanExecConf;
 
 use chronos::scheduler_interface::{
-    GetQueryArgs, GetQueryRet, HashBuildDataInfo, QueryExecutionDoneArgs, QueryStatus,
+    GetQueryArgs, GetQueryRet, QueryExecutionDoneArgs, QueryStatus,
 };
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
@@ -105,7 +105,7 @@ impl Executor {
                 .get(&build_fragment_id)
                 .expect("Unable to find the built hash table")
                 .clone();
-            let modified_plan = self
+            let _modified_plan = self
                 .add_hash_table_to_hash_probe(
                     join_data,
                     process_plan.clone(),
@@ -192,8 +192,8 @@ impl Executor {
             offset += batch.num_rows();
         }
         let single_batch = concat_batches(&schema, batches_iter)?;
-        let reservation =
-            MemoryConsumer::new(format!("HashJoinProbe")).register(context.memory_pool());
+        let _reservation =
+            MemoryConsumer::new("HashJoinProbe".to_string()).register(context.memory_pool());
         let data = JoinLeftData::new(
             hashmap,
             single_batch,

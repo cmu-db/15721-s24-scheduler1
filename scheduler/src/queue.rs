@@ -4,7 +4,7 @@ use crate::{
 };
 use datafusion::{
     config::TableParquetOptions,
-    physical_plan::joins::{HashJoinExec, HashProbeExec},
+    physical_plan::joins::{HashJoinExec},
 };
 use datafusion::{
     datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
@@ -110,7 +110,7 @@ pub fn update_plan_parent(
         } else {
             if path.len() == 2 {
                 if let Some(node) = child.as_any().downcast_ref::<HashJoinExec>() {
-                    let probe_side = node.right().clone();
+                    let _probe_side = node.right().clone();
                     // return Arc::new(
                     //     HashProbeExec::try_new(
                     //         probe_side,
