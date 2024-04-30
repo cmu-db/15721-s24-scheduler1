@@ -170,7 +170,7 @@ pub async fn parse_into_fragments(
 
     // If we encounter a hash build execution node we should execute the build
     // side as a separate fragment.
-    if root.as_any().downcast_ref::<HashJoinExec>().is_some() {
+    if pipelined && root.as_any().downcast_ref::<HashJoinExec>().is_some() {
         return create_build_fragment(
             root,
             fragment_id,
@@ -336,6 +336,8 @@ async fn create_build_fragment(
     )
     .await;
 
+    let stats = node.statistics().unwrap();
+
     Arc::new(
         HashProbeExec::try_new(
             parsed_probe_side,
@@ -347,6 +349,8 @@ async fn create_build_fragment(
             node.null_equals_null,
             node.schema(),
             node.column_indices.clone(),
+            node.properties().clone(),
+            stats
         )
         .unwrap(),
     )
