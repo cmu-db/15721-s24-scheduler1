@@ -245,6 +245,17 @@ pub async fn abort_query(query_id: u64) {
     });
 }
 
+pub async fn clear_queue() {
+    let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
+    let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
+    let mut job_status = SCHEDULER_INSTANCE.job_status.write().await;
+    let mut intermediate_files = SCHEDULER_INSTANCE.intermediate_files.write().await;
+
+    all_fragments.clear();
+    pending_fragments.clear();
+    job_status.clear();
+    intermediate_files.clear();
+}
 #[cfg(test)]
 mod tests {
     use crate::parser::*;
@@ -495,8 +506,8 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn abort_test() {
+        clear_queue().await;
         let physical_plan = build_basic_physical_plan().await.unwrap();
-        println!("Physical Plan: {:#?}", physical_plan);
         validate_basic_physical_plan_structure(&physical_plan);
 
         // Returns a hash map from query fragment ID to physical plan fragment structs
@@ -509,8 +520,9 @@ mod tests {
 
         let queued_fragment = get_plan_from_queue().await.unwrap();
         assert!(queued_fragment.root.is_some());
+        let q_id = queued_fragment.query_id;
         child_fragment_vec.push(queued_fragment);
-        abort_query(0).await;
+        abort_query(q_id).await;
 
         let mut expected_abort = 0;
         for (_, value) in SCHEDULER_INSTANCE.all_fragments.read().await.iter() {
@@ -520,6 +532,7 @@ mod tests {
             }
         }
 
+        debug_println!("{}", expected_abort);
         assert!(expected_abort == 3);
     }
 }
