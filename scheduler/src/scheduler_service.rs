@@ -45,6 +45,7 @@ impl Scheduler for MyScheduler {
                             physical_plan: p_bytes.to_vec(),
                             root: p.parent_fragments.is_empty(),
                             hash_build_data_info: vec![],
+                            aborted: p.aborted,
                         };
                         Ok(Response::new(reply))
                     }
@@ -57,6 +58,7 @@ impl Scheduler for MyScheduler {
                             physical_plan: vec![],
                             root: true, // setting this to true frees the CLI on the tokio channel, will do for now
                             hash_build_data_info: vec![],
+                            aborted: false,
                         };
                         Ok(Response::new(reply))
                     }
@@ -69,6 +71,7 @@ impl Scheduler for MyScheduler {
                     physical_plan: vec![],
                     root: false,
                     hash_build_data_info: vec![],
+                    aborted: false,
                 };
                 Ok(Response::new(reply))
             }
@@ -118,6 +121,18 @@ impl Scheduler for MyScheduler {
                 .try_into()
                 .unwrap(),
         };
+        Ok(Response::new(reply))
+    }
+
+    async fn abort_query(
+        &self,
+        request: Request<AbortQueryArgs>,
+    ) -> Result<Response<AbortQueryRet>, Status> {
+        let query_id = request.into_inner().query_id;
+        chronos::scheduler::SCHEDULER_INSTANCE
+            .abort_query(query_id)
+            .await;
+        let reply = AbortQueryRet {};
         Ok(Response::new(reply))
     }
 

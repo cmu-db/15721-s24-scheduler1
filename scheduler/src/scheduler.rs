@@ -1,5 +1,5 @@
 use crate::parser::{parse_into_fragments_wrapper, QueryFragment, QueryFragmentId};
-use crate::queue::{add_fragments_to_scheduler, finish_fragment};
+use crate::queue::{abort_query, add_fragments_to_scheduler, finish_fragment};
 use crate::scheduler_interface::*;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::FileScanConfig;
@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
+use crate::debug_println;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
@@ -107,6 +108,15 @@ impl Scheduler {
     }
 
     pub fn parse_physical_plan(&self, _physical_plan: &dyn ExecutionPlan) {}
+
+    pub async fn abort_query(&self, query_id: i32) {
+        abort_query(query_id.try_into().unwrap()).await;
+    }
+
+    // pub async fn register_executor(&self, port: i32) {
+    //     self.executors.write().await.push(ExecutorHandle { port });
+    //     debug_println!("Executor registered; port={port}");
+    // }
 
     pub async fn get_plan_from_queue(&self) -> Option<QueryFragment> {
         crate::queue::get_plan_from_queue().await

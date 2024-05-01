@@ -120,6 +120,15 @@ message GetQueryRet {
     bool root = 4;
 
     repeated HashBuildDataInfo hash_build_data_info = 5;
+
+    bool aborted = 6;
+}
+
+message AbortQueryArgs {
+    int32 query_id = 1;
+}
+
+message AbortQueryRet {
 }
 
 // The scheduler interface.
@@ -137,4 +146,8 @@ service Scheduler {
     // of query fragment is complete.
     rpc QueryExecutionDone(QueryExecutionDoneArgs) returns
         (QueryExecutionDoneRet);
+    
+    rpc AbortQuery(AbortQueryArgs) returns
+        (AbortQueryRet);
+
 }

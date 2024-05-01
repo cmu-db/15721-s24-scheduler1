@@ -28,12 +28,13 @@ use chronos::integration::{local_file_config, spill_records_to_disk};
 use core::time;
 use datafusion::physical_plan::ExecutionPlanProperties;
 use datafusion::prelude::*;
+// use lib::integration::{local_file_config, local_filegroup_config, spill_records_to_disk};
+use chronos::integration::local_filegroup_config;
 use prost::Message;
 use std::collections::HashMap;
+use std::env;
 use std::sync::Arc;
 use std::thread::sleep;
-
-use std::env;
 
 use chronos::debug_println;
 
@@ -74,9 +75,16 @@ impl Executor {
 
         let query_id = get_query_response.query_id;
         let fragment_id = get_query_response.fragment_id;
+        let intermediate_output = format!(
+            "/{wd_str}/scheduler/src/example_data/query_{query_id}/fragment_{fragment_id}.parquet"
+        );
         let process_plan =
             physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
         let output_schema = process_plan.schema();
+
+        if get_query_response.aborted {
+            return QueryResult::Config(local_file_config(output_schema, ""));
+        }
         let context = ctx.state().task_ctx();
 
         // If this plan requires us to build a hash table.
@@ -92,6 +100,12 @@ impl Executor {
                 .await
                 .insert(fragment_id, join_data);
         }
+
+        if get_query_response.aborted {
+            return QueryResult::Config(local_file_config(output_schema, ""));
+        }
+
+        let context = ctx.state().task_ctx();
 
         // If we need to add a precomputed hash table to a hash probe exec node
         for hash_build_info in get_query_response.hash_build_data_info {
@@ -116,22 +130,18 @@ impl Executor {
 
         let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
 
-        let intermediate_output = format!(
-            "{wd_str}/scheduler/src/example_data/query_{query_id}_fragment_{fragment_id}.parquet"
-        );
-
-        spill_records_to_disk(
+        let fg = spill_records_to_disk(
             &intermediate_output,
             output_stream,
             output_schema.clone(),
+            100000,
+            4,
             get_query_response.root,
         )
         .await
         .unwrap();
-        QueryResult::Config(local_file_config(
-            output_schema,
-            intermediate_output.as_str(),
-        ))
+
+        QueryResult::Config(local_filegroup_config(output_schema, fg))
     }
 
     async fn build_hash_table(
@@ -341,7 +351,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let num_workers: i32 = args[1].parse().unwrap();
 
-    let delete_intermediate: bool = args[2].parse().unwrap_or_default();
+    let delete_intermediate: bool = if args.len() > 2 {
+        args[2].parse().unwrap_or_default()
+    } else {
+        false
+    };
 
     let mut handles = Vec::new();
     let base_port = 5555;
