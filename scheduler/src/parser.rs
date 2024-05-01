@@ -350,6 +350,7 @@ async fn create_hash_build_probe_fragments(
 
     Arc::new(
         HashProbeExec::try_new(
+            parsed_build_side,
             parsed_probe_side,
             node.on.clone(),
             node.filter.clone(),
@@ -357,10 +358,8 @@ async fn create_hash_build_probe_fragments(
             node.projection.clone(),
             node.mode,
             node.null_equals_null,
-            node.schema(),
-            node.column_indices.clone(),
-            node.properties().clone(),
-            stats,
+            Some(node.properties().clone()),
+            Some(stats),
         )
         .unwrap(),
     )
