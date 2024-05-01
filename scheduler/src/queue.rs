@@ -132,8 +132,7 @@ pub fn update_plan_parent(
     root.with_new_children(new_children).unwrap()
 }
 
-/// Marks the completion of the execution of the query fragment with
-/// `fragment_id` with result `fragment_result`.
+/// Marks the completion of the execution of the query fragment with `fragment_id` with result `fragment_result`.
 pub async fn finish_fragment(
     fragment_id: QueryFragmentId,
     fragment_result: QueryResult,
@@ -248,7 +247,7 @@ pub async fn abort_query(query_id: u64) {
 pub async fn clear_queue() {
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
-    let mut job_status = SCHEDULER_INSTANCE.job_status.write().await;
+    let mut job_status = SCHEDULER_INSTANCE.query_result_senders.write().await;
     let mut intermediate_files = SCHEDULER_INSTANCE.intermediate_files.write().await;
 
     all_fragments.clear();

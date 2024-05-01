@@ -7,12 +7,12 @@ pub mod integration;
 mod parser;
 mod queue;
 
+/// Provides APIs to schedule a DataFusion [ExecutionPlan](datafusion::physical_plan::ExecutionPlan) for execution.
 pub mod scheduler;
+
+/// gRPC interface to interact with the scheduler APIs. Intended for use by the query optimizer and execution engines.
 pub mod scheduler_interface {
     tonic::include_proto!("scheduler_interface");
-}
-pub mod executor_interface {
-    tonic::include_proto!("executor_interface");
 }
 
 #[macro_export]

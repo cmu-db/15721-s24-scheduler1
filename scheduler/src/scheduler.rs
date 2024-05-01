@@ -21,9 +21,10 @@ use tokio::sync::mpsc::Sender;
 /// Generator for query ids.
 static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
-/// The scheduler instance.
+/// A database query scheduler.
 ///
-/// Stores the metadata needed for query scheduling.
+/// Stores the metadata needed for query scheduling like the fragments that have been submitted to the scheduler for
+/// execution.
 #[derive(Debug)]
 pub struct Scheduler {
     /// Map from query fragment id to fragment.
@@ -71,6 +72,8 @@ pub enum QueryResult {
 }
 
 impl Scheduler {
+    /// Schedule `physical_plan` for execution with `query_info`. `pipelined` indicates whether hash join execution
+    /// plan nodes should be split into a build and probe phase.
     pub async fn schedule_query(
         &self,
         physical_plan: Arc<dyn ExecutionPlan>,
@@ -142,12 +145,8 @@ impl Scheduler {
         abort_query(query_id.try_into().unwrap()).await;
     }
 
-    // pub async fn register_executor(&self, port: i32) {
-    //     self.executors.write().await.push(ExecutorHandle { port });
-    //     debug_println!("Executor registered; port={port}");
-    // }
-
-    pub async fn get_plan_from_queue(&self) -> Option<QueryFragment> {
+    /// Get a query fragment from the scheduler for execution.
+    pub async fn get_next_query_fragment(&self) -> Option<QueryFragment> {
         crate::queue::get_plan_from_queue().await
     }
 }

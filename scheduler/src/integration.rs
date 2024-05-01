@@ -14,7 +14,7 @@ use datafusion::prelude::*;
 use futures::stream::TryStreamExt;
 use std::{error, fs::File, path::Path, pin::Pin, sync::Arc};
 
-// think about splitting large parquet files
+/// Spills records obtained by polling `rb_stream` into `filename`.
 pub async fn spill_records_to_disk(
     filename: &str,
     mut rb_stream: Pin<Box<dyn RecordBatchStream + Send>>,
@@ -23,6 +23,7 @@ pub async fn spill_records_to_disk(
     filegroup_size: usize,
     _print: bool,
 ) -> Result<Vec<Vec<PartitionedFile>>, Box<dyn error::Error>> {
+    // TODO(George): think about splitting large parquet files
     let mut partition_number = 0usize;
     let file_name = format!("{filename}_{partition_number}.parquet");
     let path_name = Path::new(file_name.as_str());
@@ -83,6 +84,7 @@ pub async fn spill_records_to_disk(
     Ok(parquet_files_written)
 }
 
+/// Create a [ParquetExec] physical plan node that scans Parquet partitions from `file_config`.
 pub fn scan_from_parquet(file_config: FileScanConfig) -> Arc<dyn ExecutionPlan> {
     Arc::new(ParquetExec::new(
         file_config,
@@ -92,8 +94,9 @@ pub fn scan_from_parquet(file_config: FileScanConfig) -> Arc<dyn ExecutionPlan> 
     ))
 }
 
-// think about parallel reads using partitioned file groups
+/// Create a [FileScanConfig] for scanning tuples of `schema` from `filename`.
 pub fn local_file_config(schema: datatypes::SchemaRef, filename: &str) -> FileScanConfig {
+    // TODO(George): think about parallel reads using partitioned file groups
     let pq_file = PartitionedFile::from_path(filename.to_string()).unwrap();
 
     FileScanConfig {
@@ -125,7 +128,7 @@ pub fn local_filegroup_config(
     }
 }
 
-pub async fn process_sql_request(
+async fn process_sql_request(
     ctx: &SessionContext,
     item_id: u64,
 ) -> Result<(), Box<dyn error::Error>> {
@@ -146,7 +149,7 @@ pub async fn process_sql_request(
     Ok(())
 }
 
-pub async fn process_physical_fragment(
+async fn process_physical_fragment(
     fragment: QueryFragment,
     ctx: &SessionContext,
     abs_path_str: &str,
@@ -187,7 +190,7 @@ pub async fn process_physical_fragment(
         .await;
 }
 
-pub async fn spin_up(
+async fn spin_up(
     test: &str,
     id: u64,
     ctx: SessionContext,
@@ -198,7 +201,7 @@ pub async fn spin_up(
     let born = std::time::SystemTime::now();
     loop {
         std::thread::sleep(pause_between_fragment);
-        if let Some(fragment) = SCHEDULER_INSTANCE.get_plan_from_queue().await {
+        if let Some(fragment) = SCHEDULER_INSTANCE.get_next_query_fragment().await {
             process_physical_fragment(fragment, &ctx, &abs_path_str, id, test).await;
         } else {
             if std::time::SystemTime::now().duration_since(born).unwrap() > live_for {

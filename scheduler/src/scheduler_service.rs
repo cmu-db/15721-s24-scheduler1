@@ -30,7 +30,7 @@ impl Scheduler for MyScheduler {
         _request: Request<GetQueryArgs>,
     ) -> Result<Response<GetQueryRet>, Status> {
         let plan = chronos::scheduler::SCHEDULER_INSTANCE
-            .get_plan_from_queue()
+            .get_next_query_fragment()
             .await;
 
         match plan {

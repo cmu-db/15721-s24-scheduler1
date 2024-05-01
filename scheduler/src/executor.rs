@@ -389,7 +389,7 @@ mod tests {
         std::process::Command::new("cargo run")
             .env("SCHEDULER_PORT", "50051")
             .arg("--bin")
-            .arg("scheduler-api-server")
+            .arg("scheduler-service")
             .output()?;
 
         std::thread::sleep(std::time::Duration::from_millis(2000));

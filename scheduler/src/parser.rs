@@ -18,46 +18,47 @@ static FRAGMENT_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 type QueryId = u64;
 pub type QueryFragmentId = u64;
 
-// Metadata struct for now
+/// A single fragment of a query physical plan.
 #[derive(Debug, Clone)]
 pub struct QueryFragment {
-    // The id assigned with this [`QueryFragment`]
+    /// The id assigned with this [`QueryFragment`]
     pub fragment_id: QueryFragmentId,
 
-    // The id of the query which this plan fragment belongs to
+    /// The id of the query which this plan fragment belongs to
     pub query_id: QueryId,
 
-    // the entry into this [`QueryFragment`]
+    /// the entry into this [`QueryFragment`]
     pub root: Option<Arc<dyn ExecutionPlan>>,
 
-    // convenience pointers into the parent [`QueryFragment`]
+    /// convenience pointers into the parent [`QueryFragment`]
     pub parent_path_from_root: Vec<Vec<u32>>,
 
-    // vector of dependant fragment ids
+    /// vector of dependant fragment ids
     pub child_fragments: Vec<QueryFragmentId>,
 
-    // Vector of dependee Fragments
+    /// Vector of dependee Fragments
     pub parent_fragments: Vec<QueryFragmentId>,
 
-    // Query level priority provided with the query
+    /// Query level priority provided with the query
     pub query_priority: i64,
 
-    // Time when this fragment was enqueued
+    /// Time when this fragment was enqueued
     pub enqueued_time: Option<SystemTime>,
 
-    // Cost of running this fragment
+    /// Cost of running this fragment
     pub fragment_cost: Option<usize>,
 
+    /// The files storing intermediate results for this query fragment.
     pub intermediate_files: HashSet<String>,
 
     pub aborted: bool,
 }
 
-// Function to populate the cost of running a fragment.
-//
-// Currently it goes through all the execution plan nodes in the fragment
-// and sums up the number of rows based on provided statistics.
-// It can later used for sophisticated costs provided by the optimizer.
+/// Function to populate the cost of running a fragment.
+///
+/// Currently it goes through all the execution plan nodes in the fragment
+/// and sums up the number of rows based on provided statistics.
+/// It can later used for sophisticated costs provided by the optimizer.
 async fn populate_fragment_cost(fragment: &mut QueryFragment) {
     let mut cur_cost = 0;
     let root = fragment.root.clone().unwrap();

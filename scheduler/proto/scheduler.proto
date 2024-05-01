@@ -101,6 +101,7 @@ message QueryExecutionDoneRet {
 
 }
 
+// Arguments required for the GetQuery RPC.
 message GetQueryArgs {
 
 }
@@ -110,6 +111,7 @@ message HashBuildDataInfo {
     int32 build_fragment_id = 2;
 }
 
+// Information returned from the GetQuery RPC.
 message GetQueryRet {
     int32 query_id = 1;
 
