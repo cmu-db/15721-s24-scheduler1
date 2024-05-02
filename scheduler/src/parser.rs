@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use crate::debug_println;
+
 static FRAGMENT_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 
 type QueryId = u64;
@@ -294,6 +296,7 @@ async fn create_hash_build_probe_fragments(
 ) -> (Arc<dyn ExecutionPlan>, QueryId) {
     let node = arc_node.as_any().downcast_ref::<HashJoinExec>().unwrap();
     let build_side = node.left.clone();
+    debug_println!("Joining on: {:#?}, schema: {:#?}", node.on(), node.schema());
 
     // Create the build fragment with default parameters and add it to `output`.
     let build_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
@@ -319,7 +322,7 @@ async fn create_hash_build_probe_fragments(
         build_fragment_id,
         output,
         query_id,
-        Vec::new(),
+        vec![0],
         priority,
         pipelined,
     )
@@ -329,22 +332,24 @@ async fn create_hash_build_probe_fragments(
     let build_side_new = HashBuildExec::try_new(
         parsed_build_side.clone(),
         on_left,
-        None,
+        node.filter.clone(),
         &node.join_type,
-        None,
+        node.projection.clone(),
         node.mode,
         node.null_equals_null,
     )
     .unwrap();
 
+    // Populate the build fragment.
     let build_fragment_ref = output.get_mut(&build_fragment_id).unwrap();
     let mut new_path = path.clone();
     new_path.push(0);
     build_fragment_ref.parent_path_from_root.push(new_path);
     build_fragment_ref.root = Some(Arc::new(build_side_new));
 
+    // Now let's continue extending the current fragment onto the probe side.
     let probe_side = node.right.clone();
-    path.push(0);
+    path.push(1);
     //let probe_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
     let parsed_probe_side = parse_into_fragments(
         probe_side,

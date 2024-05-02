@@ -96,8 +96,9 @@ pub fn update_plan_parent(
             QueryResult::ArrowExec(file_config) => return create_arrow_scan_node(file_config),
             QueryResult::ParquetExec(file_config) => return create_parquet_scan_node(file_config),
             QueryResult::HashBuild => {
-                // return Arc::new(EmptyExec::new(root.schema()).with_partitions(3))
-                return root.children()[0].clone();
+                // assert!(root.as_any().downcast_ref::<HashBuildExec>().is_some());
+                // return root.children()[0].clone();
+                return root;
             }
         }
     }
@@ -110,24 +111,6 @@ pub fn update_plan_parent(
         if i != path[0] {
             new_children.push(child);
         } else {
-            if path.len() == 2 {
-                if let Some(node) = child.as_any().downcast_ref::<HashJoinExec>() {
-                    let _probe_side = node.right().clone();
-                    // return Arc::new(
-                    //     HashProbeExec::try_new(
-                    //         probe_side,
-                    //         node.on,
-                    //         node.filter,
-                    //         &node.join_type,
-                    //         node.projection,
-                    //         node.mode,
-                    //         node.null_equals_null,
-                    //         //node.join_data,
-                    //     )
-                    //     .unwrap(),
-                    // );
-                }
-            }
             new_children.push(update_plan_parent(child, &path[1..], query_result));
         }
         i += 1;
@@ -192,14 +175,18 @@ pub async fn finish_fragment(
         let parent_fragment = all_fragments.get_mut(id).unwrap();
 
         let path = &parent_fragment_paths[i];
-        let new_root = update_plan_parent(
-            parent_fragment.root.clone().unwrap(),
-            path,
-            &fragment_result,
-        );
+        match fragment_result {
+            QueryResult::HashBuild => {}
+            _ => {
+                let new_root = update_plan_parent(
+                    parent_fragment.root.clone().unwrap(),
+                    path,
+                    &fragment_result,
+                );
 
-        parent_fragment.root = Some(new_root);
-
+                parent_fragment.root = Some(new_root);
+            }
+        }
         if let QueryResult::ParquetExec(result) = &fragment_result {
             let intermediate_files = &result.file_groups;
             for partition in intermediate_files.clone().into_iter() {

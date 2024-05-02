@@ -75,28 +75,6 @@ impl Executor {
         }
         let context = ctx.state().task_ctx();
 
-        // If this plan requires us to build a hash table.
-        if let Some(node) = process_plan.as_any().downcast_ref::<HashBuildExec>() {
-            debug_println!("Need to build a hash table for fragment {fragment_id}");
-            let input = node.input().clone();
-            let on = node.on.clone();
-            let join_data = self
-                .build_hash_table(None, input, context.clone(), on)
-                .await
-                .expect("Failed to build a hash table");
-            self.generated_hash_tables
-                .write()
-                .await
-                .insert(fragment_id, join_data);
-            return QueryResult::HashTable;
-        }
-
-        if get_query_response.aborted {
-            return QueryResult::Config(local_file_config(output_schema, ""));
-        }
-
-        let context = ctx.state().task_ctx();
-
         // If we need to add a precomputed hash table to a hash probe exec node
         for hash_build_info in query_details.hash_build_data {
             let path_from_parent = hash_build_info.path_from_parent;
@@ -114,7 +92,42 @@ impl Executor {
             process_plan = self
                 .add_hash_table_to_hash_probe(join_data, process_plan.clone(), &path_from_parent)
                 .await;
+            debug_println!(
+                "Successfully added precomputed hash table computed in fragment {build_fragment_id}"
+            );
         }
+
+        // If this plan requires us to build a hash table.
+        if let Some(node) = process_plan.as_any().downcast_ref::<HashBuildExec>() {
+            debug_println!("Need to build a hash table for fragment {fragment_id}");
+            let input = node.input().clone();
+            if input.as_any().downcast_ref::<HashProbeExec>().is_some() {
+                debug_println!(
+                    "Input for the hash table is a HashProbeExec for fragment {fragment_id}"
+                );
+            }
+            let on = node.on.clone();
+            let join_data = self
+                .build_hash_table(None, input, context.clone(), on)
+                .await
+                .expect(&format!(
+                    "Failed to build a hash table: {:#?} {:#?}",
+                    node.schema(),
+                    node.on()
+                ));
+            self.generated_hash_tables
+                .write()
+                .await
+                .insert(fragment_id, join_data);
+            debug_println!("Generated hash table for fragment {fragment_id}");
+            return QueryResult::HashTable;
+        }
+
+        if get_query_response.aborted {
+            return QueryResult::Config(local_file_config(output_schema, ""));
+        }
+
+        let context = ctx.state().task_ctx();
 
         let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
 
@@ -226,7 +239,10 @@ impl Executor {
                 let arc_node: Arc<dyn ExecutionPlan> = Arc::new(new_node);
                 return arc_node;
             } else {
-                panic!("Expected to reach a hash probe");
+                panic!(
+                    "Expected to reach a hash probe, instead reached: {:#?}",
+                    plan
+                );
             }
         }
 
