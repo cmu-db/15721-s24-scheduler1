@@ -6,8 +6,8 @@ use datafusion::execution::TaskContext;
 use datafusion::physical_expr::PhysicalExprRef;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion::physical_plan::joins::utils::JoinHashMap;
-use datafusion::physical_plan::joins::JoinLeftData;
 use datafusion::physical_plan::joins::{update_hash, HashBuildExec};
+use datafusion::physical_plan::joins::{HashProbeExec, JoinLeftData};
 use datafusion_common::arrow::compute::concat_batches;
 
 use datafusion_common::DataFusionError;
@@ -24,10 +24,11 @@ use tonic::Code;
 
 use ahash::RandomState;
 use chronos::integration::{local_file_config, spill_records_to_disk};
-use core::time;
+use core::{hash, time};
 use datafusion::physical_plan::ExecutionPlanProperties;
 use datafusion::physical_plan::{self, ExecutionPlan};
 use datafusion::prelude::*;
+use std::os::unix::process;
 // use lib::integration::{local_file_config, local_filegroup_config, spill_records_to_disk};
 use chronos::integration::local_filegroup_config;
 use prost::Message;
@@ -47,7 +48,7 @@ enum QueryResult {
 #[derive(Debug, Default)]
 pub struct Executor {
     random_state: RandomState,
-    generated_hash_tables: Arc<RwLock<HashMap<i32, JoinLeftData>>>,
+    generated_hash_tables: Arc<RwLock<HashMap<u64, JoinLeftData>>>,
 }
 
 impl Executor {
@@ -59,13 +60,14 @@ impl Executor {
         let wd = env::current_dir().unwrap();
         let wd_str = wd.to_str().unwrap();
 
-        let query_id = get_query_response.query_id;
-        let fragment_id = get_query_response.fragment_id;
+        let query_details = get_query_response.query_details.unwrap();
+
+        let query_id = query_details.query_id;
+        let fragment_id = query_details.fragment_id;
         let intermediate_output = format!(
             "/{wd_str}/scheduler/src/example_data/query_{query_id}/fragment_{fragment_id}.parquet"
         );
-        let process_plan =
-            physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
+        let mut process_plan = physical_plan_from_bytes(&query_details.physical_plan, ctx).unwrap();
         let output_schema = process_plan.schema();
 
         if get_query_response.aborted {
@@ -94,9 +96,8 @@ impl Executor {
         let context = ctx.state().task_ctx();
 
         // If we need to add a precomputed hash table to a hash probe exec node
-        for hash_build_info in get_query_response.hash_build_data_info {
+        for hash_build_info in query_details.hash_build_data {
             let path_from_parent = hash_build_info.path_from_parent;
-            let path_from_parent_vec: Vec<u32> = serde_json::from_slice(&path_from_parent).unwrap();
             let build_fragment_id = hash_build_info.build_fragment_id;
             let join_data = self
                 .generated_hash_tables
@@ -105,12 +106,8 @@ impl Executor {
                 .get(&build_fragment_id)
                 .expect("Unable to find the built hash table")
                 .clone();
-            let _modified_plan = self
-                .add_hash_table_to_hash_probe(
-                    join_data,
-                    process_plan.clone(),
-                    &path_from_parent_vec,
-                )
+            process_plan = self
+                .add_hash_table_to_hash_probe(join_data, process_plan.clone(), &path_from_parent)
                 .await;
         }
 
@@ -206,8 +203,28 @@ impl Executor {
         plan: Arc<dyn ExecutionPlan>,
         path_from_parent: &[u32],
     ) -> Arc<dyn ExecutionPlan> {
+        // Found the HashProbeExec node (hopefully). Let's populate it with the join data we have pre-computed.
         if path_from_parent.is_empty() {
-            return plan;
+            if let Some(hash_probe) = plan.as_any().downcast_ref::<HashProbeExec>() {
+                let mut new_node = HashProbeExec::try_new(
+                    hash_probe.left.clone(),
+                    hash_probe.right.clone(),
+                    hash_probe.on.clone(),
+                    hash_probe.filter.clone(),
+                    &hash_probe.join_type,
+                    hash_probe.projection.clone(),
+                    hash_probe.partition_mode().clone(),
+                    hash_probe.null_equals_null(),
+                    None,
+                    None,
+                )
+                .unwrap();
+                new_node.set_join_data(join_data);
+                let arc_node: Arc<dyn ExecutionPlan> = Arc::new(new_node);
+                return arc_node;
+            } else {
+                panic!("Expected to reach a hash probe");
+            }
         }
 
         let mut new_children = Vec::new();
@@ -219,12 +236,8 @@ impl Executor {
                 continue;
             }
             new_children.push(
-                self.add_hash_table_to_hash_probe(
-                    join_data.clone(),
-                    plan.clone(),
-                    &path_from_parent[1..],
-                )
-                .await,
+                self.add_hash_table_to_hash_probe(join_data.clone(), child, &path_from_parent[1..])
+                    .await,
             );
         }
         plan.with_new_children(new_children).unwrap()
@@ -267,11 +280,12 @@ impl Executor {
             match client.get_query(get_request).await {
                 Ok(response) => {
                     let response = response.into_inner();
-                    if response.query_id < 0 {
+                    if response.query_details.is_none() {
                         sleep(time::Duration::from_millis(500));
                         continue;
                     }
 
+                    let query_details = response.query_details.clone().unwrap();
                     let result = self.process_fragment(response.clone(), &ctx).await;
 
                     let finished_request: tonic::Request<QueryExecutionDoneArgs>;
@@ -280,21 +294,21 @@ impl Executor {
                         QueryResult::Config(config) => {
                             let interm_proto = FileScanExecConf::try_from(&config).unwrap();
                             finished_request = tonic::Request::new(QueryExecutionDoneArgs {
-                                fragment_id: response.fragment_id,
+                                fragment_id: query_details.fragment_id,
                                 status: QueryStatus::Done.into(),
                                 file_scan_config: interm_proto.encode_to_vec(),
                                 root: response.root,
-                                query_id: response.query_id,
+                                query_id: query_details.query_id,
                                 generated_hash_table: false,
                             });
                         }
                         QueryResult::HashTable => {
                             finished_request = tonic::Request::new(QueryExecutionDoneArgs {
-                                fragment_id: response.fragment_id,
+                                fragment_id: query_details.fragment_id,
                                 status: QueryStatus::Done.into(),
                                 file_scan_config: vec![],
                                 root: response.root,
-                                query_id: response.query_id,
+                                query_id: query_details.query_id,
                                 generated_hash_table: true,
                             });
                         }
@@ -362,9 +376,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let generated_hash_tables = Arc::new(RwLock::new(HashMap::new()));
 
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(10 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap();
     for i in 0..num_workers {
         let generated_hash_tables = generated_hash_tables.clone();
-        handles.push(tokio::spawn(async move {
+        handles.push(rt.spawn(async move {
             let executor = Executor {
                 random_state: RandomState::with_seeds(0, 0, 0, 0),
                 generated_hash_tables,
@@ -372,6 +391,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             executor.initialize(i, delete_intermediate).await;
         }));
     }
+    // for i in 0..num_workers {
+    //     let generated_hash_tables = generated_hash_tables.clone();
+    //     handles.push(tokio::spawn(async move {
+    //         let executor = Executor {
+    //             random_state: RandomState::with_seeds(0, 0, 0, 0),
+    //             generated_hash_tables,
+    //         };
+    //         executor.initialize(i, delete_intermediate).await;
+    //     }));
+    // }
 
     for handle in handles {
         let _ = handle.await;

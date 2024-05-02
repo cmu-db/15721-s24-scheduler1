@@ -1,3 +1,4 @@
+use datafusion::arrow::datatypes::ToByteSlice;
 use prost::Message;
 
 use tokio::runtime::Handle;
@@ -34,18 +35,30 @@ impl Scheduler for MyScheduler {
             .await;
 
         match plan {
-            Some(p) => {
-                let physical_plan = physical_plan_to_bytes(p.root.unwrap());
+            Some(plan) => {
+                let plan_bytes = physical_plan_to_bytes(plan.root.unwrap());
 
-                match physical_plan {
-                    Ok(p_bytes) => {
+                match plan_bytes {
+                    Ok(plan_bytes) => {
+                        let mut hash_build_data = vec![];
+                        for location in plan.hash_probe_locations {
+                            let probe_node_path = location.0;
+                            let build_fragment_id = location.1;
+                            hash_build_data.push(HashBuildData {
+                                path_from_parent: probe_node_path,
+                                build_fragment_id,
+                            })
+                        }
+
                         let reply = GetQueryRet {
-                            query_id: i32::try_from(p.query_id).unwrap(),
-                            fragment_id: i32::try_from(p.fragment_id).unwrap(),
-                            physical_plan: p_bytes.to_vec(),
-                            root: p.parent_fragments.is_empty(),
-                            hash_build_data_info: vec![],
-                            aborted: p.aborted,
+                            query_details: Some(QueryDetails {
+                                query_id: plan.query_id,
+                                fragment_id: plan.fragment_id,
+                                physical_plan: plan_bytes.to_vec(),
+                                hash_build_data,
+                            }),
+                            root: plan.parent_fragments.is_empty(),
+                            aborted: plan.aborted,
                         };
                         Ok(Response::new(reply))
                     }
@@ -53,11 +66,8 @@ impl Scheduler for MyScheduler {
                         println!("{:?}", e);
                         // chronos::queue::kill_query(p.query_id); TODO
                         let reply = GetQueryRet {
-                            query_id: -1,
-                            fragment_id: -1,
-                            physical_plan: vec![],
+                            query_details: None,
                             root: true, // setting this to true frees the CLI on the tokio channel, will do for now
-                            hash_build_data_info: vec![],
                             aborted: false,
                         };
                         Ok(Response::new(reply))
@@ -66,11 +76,8 @@ impl Scheduler for MyScheduler {
             }
             None => {
                 let reply = GetQueryRet {
-                    query_id: -1,
-                    fragment_id: -1,
-                    physical_plan: vec![],
+                    query_details: None,
                     root: false,
-                    hash_build_data_info: vec![],
                     aborted: false,
                 };
                 Ok(Response::new(reply))

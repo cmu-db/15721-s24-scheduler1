@@ -52,6 +52,10 @@ pub struct QueryFragment {
     pub intermediate_files: HashSet<String>,
 
     pub aborted: bool,
+
+    /// The locations of [HashProbeExec] nodes in the fragment. These nodes need a built hash table before they
+    /// can be executed.
+    pub hash_probe_locations: Vec<(Vec<u32>, u64)>,
 }
 
 /// Function to populate the cost of running a fragment.
@@ -110,6 +114,7 @@ pub async fn parse_into_fragments_wrapper(
         fragment_cost: None,
         intermediate_files: HashSet::<String>::new(),
         aborted: false,
+        hash_probe_locations: vec![],
     };
     let path = Vec::<u32>::new();
     output.insert(root_fragment.fragment_id, root_fragment);
@@ -145,19 +150,19 @@ pub async fn parse_into_fragments_wrapper(
 ///  fragment) and returns a dummy scan node
 #[async_recursion]
 pub async fn parse_into_fragments(
-    root: Arc<dyn ExecutionPlan>,
-    fragment_id: QueryFragmentId,
+    node: Arc<dyn ExecutionPlan>,
+    node_fragment_id: QueryFragmentId,
     output: &mut HashMap<QueryFragmentId, QueryFragment>,
     query_id: u64,
     mut path: Vec<u32>,
     priority: i64,
     pipelined: bool,
 ) -> Arc<dyn ExecutionPlan> {
-    let children = root.children();
+    let children = node.children();
 
     // Trivial case of no children.
     if children.is_empty() {
-        return root;
+        return node;
     }
 
     // Single child just go down.
@@ -165,7 +170,7 @@ pub async fn parse_into_fragments(
         path.push(0);
         let new_child = parse_into_fragments(
             children[0].clone(),
-            fragment_id,
+            node_fragment_id,
             output,
             query_id,
             path,
@@ -173,28 +178,33 @@ pub async fn parse_into_fragments(
             pipelined,
         )
         .await;
-        return root.with_new_children(vec![new_child]).unwrap();
+        return node.with_new_children(vec![new_child]).unwrap();
     }
 
-    // If we encounter a hash build execution node we should execute the build
-    // side as a separate fragment.
-    if pipelined && root.as_any().downcast_ref::<HashJoinExec>().is_some() {
-        return create_hash_build_probe_fragments(
-            root,
-            fragment_id,
+    // If we encounter a hash build execution node we should execute the build side as a separate fragment. This
+    // replaces the hash build with a hash probe.
+    if pipelined && node.as_any().downcast_ref::<HashJoinExec>().is_some() {
+        let (probe_node, build_fragment_id) = create_hash_build_probe_fragments(
+            node.clone(),
+            node_fragment_id,
             output,
             query_id,
-            path,
+            &path,
             priority,
             pipelined,
         )
         .await;
+        let parent_fragment = output.get_mut(&node_fragment_id).unwrap();
+        parent_fragment
+            .hash_probe_locations
+            .push((path.clone(), build_fragment_id));
+        return probe_node;
     }
 
     // Otherwise we should create the child fragments.
     let new_children = create_child_fragments(
         children,
-        fragment_id,
+        node_fragment_id,
         output,
         query_id,
         path,
@@ -203,7 +213,7 @@ pub async fn parse_into_fragments(
     )
     .await;
 
-    let new_root = root.with_new_children(new_children);
+    let new_root = node.with_new_children(new_children);
     new_root.unwrap()
 }
 
@@ -234,6 +244,7 @@ async fn create_child_fragments(
             fragment_cost: None,
             intermediate_files: HashSet::<String>::new(),
             aborted: false,
+            hash_probe_locations: vec![],
         };
         output.insert(child_fragment_id, child_query_fragment);
 
@@ -270,18 +281,17 @@ async fn create_child_fragments(
     new_children
 }
 
-/// Split the hash join execution `node` into build and probe fragments.
-/// Returns a new [`ExecutionPlan`] that represents the results of executing
-/// this hash join.
+/// Split the hash join execution `node` into build and probe fragments. Returns a new [`ExecutionPlan`] that
+/// represents the results of executing this hash join.
 async fn create_hash_build_probe_fragments(
     arc_node: Arc<dyn ExecutionPlan>,
     fragment_id: QueryFragmentId,
     output: &mut HashMap<QueryFragmentId, QueryFragment>,
     query_id: u64,
-    path: Vec<u32>,
+    path: &Vec<u32>,
     priority: i64,
     pipelined: bool,
-) -> Arc<dyn ExecutionPlan> {
+) -> (Arc<dyn ExecutionPlan>, QueryId) {
     let node = arc_node.as_any().downcast_ref::<HashJoinExec>().unwrap();
     let build_side = node.left.clone();
 
@@ -299,6 +309,7 @@ async fn create_hash_build_probe_fragments(
         query_priority: 0,
         intermediate_files: HashSet::<String>::new(),
         aborted: false,
+        hash_probe_locations: vec![],
     };
     output.insert(build_fragment_id, build_fragment);
 
@@ -348,20 +359,23 @@ async fn create_hash_build_probe_fragments(
 
     let stats = node.statistics().unwrap();
 
-    Arc::new(
-        HashProbeExec::try_new(
-            parsed_build_side,
-            parsed_probe_side,
-            node.on.clone(),
-            node.filter.clone(),
-            &node.join_type,
-            node.projection.clone(),
-            node.mode,
-            node.null_equals_null,
-            Some(node.properties().clone()),
-            Some(stats),
-        )
-        .unwrap(),
+    (
+        Arc::new(
+            HashProbeExec::try_new(
+                parsed_build_side,
+                parsed_probe_side,
+                node.on.clone(),
+                node.filter.clone(),
+                &node.join_type,
+                node.projection.clone(),
+                node.mode,
+                node.null_equals_null,
+                Some(node.properties().clone()),
+                Some(stats),
+            )
+            .unwrap(),
+        ),
+        build_fragment_id,
     )
 }
 
@@ -665,12 +679,12 @@ mod tests {
         validate_hash_join_plan(&plan).await;
 
         let fragments = parse_into_fragments_wrapper(plan, 0, 0, true).await;
-        print!("{:?}", fragments);
 
         let mut found_hash_build = false;
 
         for (_, fragment) in fragments {
             assert!(fragment.root.is_some());
+            print!("{:#?}", fragment.root);
             if let Some(_) = fragment
                 .root
                 .clone()
@@ -679,9 +693,18 @@ mod tests {
                 .downcast_ref::<HashBuildExec>()
             {
                 found_hash_build = true;
+                assert!(fragment.hash_probe_locations.is_empty());
+            } else {
+                // Check that the info about the location of the HashProbeExec node was populated correctly.
+                assert_eq!(fragment.hash_probe_locations.len(), 1);
+                let location = fragment.hash_probe_locations.get(0).unwrap();
+                let path = &location.0;
+                assert_eq!(path.len(), 3);
+                assert_eq!(path[0], 0);
+                assert_eq!(path[1], 0);
+                assert_eq!(path[2], 0);
             }
         }
-
         assert!(found_hash_build);
     }
 }

@@ -45,7 +45,7 @@ message ScheduleQueryArgs {
 // Information returned from the ScheduleQuery RPC.
 message ScheduleQueryRet {
     // The identifier to refer to this query execution.
-    int32 query_id = 1;
+    uint64 query_id = 1;
 
     // The path info for intermediate files
     bytes file_scan_config = 2;
@@ -76,7 +76,7 @@ message QueryJobStatusRet {
 // Arguments required for the QueryExecutionDone RPC.
 message QueryExecutionDoneArgs {
     // The query fragment whose execution is complete.
-    int32 fragment_id = 1;
+    uint64 fragment_id = 1;
 
     // The status of query execution.
     QueryStatus status = 2;
@@ -88,7 +88,7 @@ message QueryExecutionDoneArgs {
     bool root = 4;
 
     // Query id of the whole plan
-    int32 query_id = 5;
+    uint64 query_id = 5;
 
     bool generated_hash_table = 6;
 }
@@ -106,24 +106,28 @@ message GetQueryArgs {
 
 }
 
-message HashBuildDataInfo {
-    bytes path_from_parent = 1;
-    int32 build_fragment_id = 2;
+message HashBuildData {
+    repeated uint32 path_from_parent = 1;
+    uint64 build_fragment_id = 2;
+}
+
+message QueryDetails {
+    uint64 query_id = 1;
+
+    uint64 fragment_id = 2;
+
+    bytes physical_plan = 3;
+
+    repeated HashBuildData hash_build_data = 5;
 }
 
 // Information returned from the GetQuery RPC.
 message GetQueryRet {
-    int32 query_id = 1;
+    optional QueryDetails query_details = 1;
 
-    int32 fragment_id = 2;
+    bool root = 2;
 
-    bytes physical_plan = 3;
-
-    bool root = 4;
-
-    repeated HashBuildDataInfo hash_build_data_info = 5;
-
-    bool aborted = 6;
+    bool aborted = 3;
 }
 
 message AbortQueryArgs {

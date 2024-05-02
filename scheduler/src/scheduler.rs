@@ -34,7 +34,7 @@ pub struct Scheduler {
     pub pending_fragments: RwLock<Vec<QueryFragmentId>>,
 
     /// Map from query id to a [`Sender`] for sending the [`FileScanConfig`] for the query result.
-    pub query_result_senders: RwLock<HashMap<i32, Sender<Vec<u8>>>>,
+    pub query_result_senders: RwLock<HashMap<u64, Sender<Vec<u8>>>>,
 
     pub intermediate_files: RwLock<HashMap<String, i32>>,
 }
@@ -59,7 +59,7 @@ pub enum PipelineBreakers {
 /// Information received at the time the query is scheduled for execution.
 pub struct ScheduleResult {
     /// The query id.
-    pub query_id: i32,
+    pub query_id: u64,
     /// The time the query was enqueued.
     pub enqueue_time: SystemTime,
 }
@@ -117,8 +117,8 @@ impl Scheduler {
     /// of the query.
     pub async fn query_execution_done(
         &self,
-        query_id: i32,
-        fragment_id: i32,
+        query_id: u64,
+        fragment_id: u64,
         file_scan_config: FileScanConfig,
         file_scan_config_bytes: Vec<u8>,
         is_root_fragment: bool,
@@ -155,7 +155,7 @@ lazy_static! {
     pub static ref SCHEDULER_INSTANCE: Scheduler = Scheduler {
         all_fragments: RwLock::new(HashMap::new()),
         pending_fragments: RwLock::new(vec![]),
-        query_result_senders: RwLock::new(HashMap::<i32, Sender<Vec<u8>>>::new()),
+        query_result_senders: RwLock::new(HashMap::<u64, Sender<Vec<u8>>>::new()),
         intermediate_files: RwLock::new(HashMap::<String, i32>::new()),
     };
 }

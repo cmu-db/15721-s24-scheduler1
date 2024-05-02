@@ -363,6 +363,7 @@ mod tests {
             fragment_cost: None,
             intermediate_files: HashSet::<String>::new(),
             aborted: false,
+            hash_probe_locations: vec![],
         };
         let mut map: HashMap<QueryFragmentId, QueryFragment> = HashMap::new();
         map.insert(0, fragment);
