@@ -214,8 +214,8 @@ async fn spin_up(
 
 #[cfg(test)]
 mod tests {
+    use crate::orchestrator::{self, clear_queue};
     use crate::parser;
-    use crate::queue::{self, clear_queue};
     use crate::utils::*;
     use datafusion::arrow::array::RecordBatch;
     use datafusion::arrow::compute::kernels::concat;
@@ -473,7 +473,7 @@ mod tests {
 
         //read disk
         let root_fragment = fragments.remove(&0).unwrap();
-        let root_exec = queue::update_plan_parent(
+        let root_exec = orchestrator::update_plan_parent(
             root_fragment.root.unwrap(),
             &left_path[0],
             &scheduler::QueryResult::ParquetExec(local_filegroup_config(
@@ -481,7 +481,7 @@ mod tests {
                 left_fg,
             )),
         );
-        let root_exec = queue::update_plan_parent(
+        let root_exec = orchestrator::update_plan_parent(
             root_exec,
             &right_path[0],
             &scheduler::QueryResult::ParquetExec(local_filegroup_config(

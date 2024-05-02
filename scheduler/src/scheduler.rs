@@ -1,5 +1,5 @@
+use crate::orchestrator::{abort_query, add_fragments_to_scheduler, finish_fragment};
 use crate::parser::{parse_into_fragments_wrapper, QueryFragment, QueryFragmentId};
-use crate::queue::{abort_query, add_fragments_to_scheduler, finish_fragment};
 use crate::scheduler_interface::*;
 
 use datafusion::datasource::physical_plan::FileScanConfig;
@@ -139,7 +139,7 @@ impl Scheduler {
 
     /// Get a query fragment from the scheduler for execution.
     pub async fn get_next_query_fragment(&self) -> Option<QueryFragment> {
-        crate::queue::get_plan_from_queue().await
+        crate::orchestrator::get_plan_from_queue().await
     }
 }
 

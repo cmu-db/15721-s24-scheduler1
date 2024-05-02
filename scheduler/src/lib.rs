@@ -8,8 +8,8 @@
 //! its own fragment. Support is also available for pipelining hash join by splitting up the hash build phase into
 //! a separate fragment.
 
+mod orchestrator;
 mod parser;
-mod queue;
 /// Util code.
 pub mod utils;
 

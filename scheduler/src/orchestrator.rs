@@ -252,8 +252,8 @@ pub async fn clear_queue() {
 }
 #[cfg(test)]
 mod tests {
+    use crate::orchestrator::*;
     use crate::parser::*;
-    use crate::queue::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
     use datafusion::datasource::{empty::EmptyTable, DefaultTableSource};
     use datafusion::execution::context::SessionState;
