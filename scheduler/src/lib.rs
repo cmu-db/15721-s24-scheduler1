@@ -3,9 +3,10 @@
 //! Provides inter-query and intra-query parallelism by splitting up queries
 //! into fragments.
 
-pub mod integration;
 mod parser;
 mod queue;
+/// Util code.
+pub mod utils;
 
 /// Provides APIs to schedule a DataFusion [ExecutionPlan](datafusion::physical_plan::ExecutionPlan) for execution.
 pub mod scheduler;

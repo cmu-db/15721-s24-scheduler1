@@ -213,9 +213,9 @@ async fn spin_up(
 
 #[cfg(test)]
 mod tests {
-    use crate::integration::*;
     use crate::parser;
     use crate::queue::{self, clear_queue};
+    use crate::utils::*;
     use datafusion::arrow::array::RecordBatch;
     use datafusion::arrow::compute::kernels::concat;
     use datafusion::arrow::ipc;

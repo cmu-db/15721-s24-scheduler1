@@ -23,14 +23,14 @@ use tonic::transport::Channel;
 use tonic::Code;
 
 use ahash::RandomState;
-use chronos::integration::{local_file_config, spill_records_to_disk};
+use chronos::utils::{local_file_config, spill_records_to_disk};
 use core::time;
 use datafusion::physical_plan::ExecutionPlanProperties;
 use datafusion::physical_plan::{self, ExecutionPlan};
 use datafusion::prelude::*;
 
 // use lib::integration::{local_file_config, local_filegroup_config, spill_records_to_disk};
-use chronos::integration::local_filegroup_config;
+use chronos::utils::local_filegroup_config;
 use prost::Message;
 use std::collections::HashMap;
 use std::env;
@@ -110,11 +110,9 @@ impl Executor {
             let join_data = self
                 .build_hash_table(None, input, context.clone(), on)
                 .await
-                .expect(&format!(
-                    "Failed to build a hash table: {:#?} {:#?}",
+                .unwrap_or_else(|_| panic!("Failed to build a hash table: {:#?} {:#?}",
                     node.schema(),
-                    node.on()
-                ));
+                    node.on()));
             self.generated_hash_tables
                 .write()
                 .await

@@ -2,11 +2,10 @@ use crate::{
     parser::{QueryFragment, QueryFragmentId},
     scheduler::{QueryResult, SCHEDULER_INSTANCE},
 };
-use datafusion::{config::TableParquetOptions, physical_plan::joins::HashJoinExec};
-use datafusion::{datasource::listing::PartitionedFile, physical_plan::empty::EmptyExec};
+use datafusion::{config::TableParquetOptions};
+
 use datafusion::{
     datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
-    physical_plan::joins::HashBuildExec,
 };
 
 use super::debug_println;
