@@ -185,7 +185,6 @@ async fn process_physical_fragment(
                 output_schema,
                 intermediate_output.as_str(),
             )),
-            vec![vec![]],
         )
         .await;
 }

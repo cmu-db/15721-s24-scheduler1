@@ -167,13 +167,21 @@ impl Scheduler for MyScheduler {
             return Err(status);
         }
 
-        let file_scan_exec_conf =
-            FileScanExecConf::decode(request_content.file_scan_config.clone().into_buf()).unwrap();
-        let file_scan_config = from_proto::parse_protobuf_file_scan_config(
-            &file_scan_exec_conf,
-            &SessionContext::new(),
-        )
-        .unwrap();
+        let mut file_scan_config = None;
+
+        if request_content.generated_hash_table {
+        } else {
+            let file_scan_exec_conf =
+                FileScanExecConf::decode(request_content.file_scan_config.clone().into_buf())
+                    .unwrap();
+            file_scan_config = Some(
+                from_proto::parse_protobuf_file_scan_config(
+                    &file_scan_exec_conf,
+                    &SessionContext::new(),
+                )
+                .unwrap(),
+            );
+        }
         let query_id = request_content.query_id;
         let is_root_fragment = request_content.root;
 

@@ -189,7 +189,7 @@ pub async fn parse_into_fragments(
             node_fragment_id,
             output,
             query_id,
-            &path,
+            path.clone(),
             priority,
             pipelined,
         )
@@ -288,7 +288,7 @@ async fn create_hash_build_probe_fragments(
     fragment_id: QueryFragmentId,
     output: &mut HashMap<QueryFragmentId, QueryFragment>,
     query_id: u64,
-    path: &Vec<u32>,
+    mut path: Vec<u32>,
     priority: i64,
     pipelined: bool,
 ) -> (Arc<dyn ExecutionPlan>, QueryId) {
@@ -325,9 +325,10 @@ async fn create_hash_build_probe_fragments(
     )
     .await;
 
+    let on_left = node.on.iter().map(|on| on.0.clone()).collect::<Vec<_>>();
     let build_side_new = HashBuildExec::try_new(
         parsed_build_side.clone(),
-        node.on.iter().map(|on| on.0.clone()).collect(),
+        on_left,
         None,
         &node.join_type,
         None,
@@ -342,16 +343,15 @@ async fn create_hash_build_probe_fragments(
     build_fragment_ref.parent_path_from_root.push(new_path);
     build_fragment_ref.root = Some(Arc::new(build_side_new));
 
-    // TODO(Aditya): the probe side should not be a separate fragment,
-    // it should extent the current fragment to form a long pipeline.
     let probe_side = node.right.clone();
-    let probe_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
+    path.push(0);
+    //let probe_fragment_id = FRAGMENT_ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
     let parsed_probe_side = parse_into_fragments(
         probe_side,
-        probe_fragment_id,
+        fragment_id,
         output,
         query_id,
-        Vec::new(),
+        path,
         priority,
         pipelined,
     )
@@ -359,6 +359,11 @@ async fn create_hash_build_probe_fragments(
 
     let stats = node.statistics().unwrap();
 
+    output
+        .get_mut(&fragment_id)
+        .unwrap()
+        .child_fragments
+        .push(build_fragment_id);
     (
         Arc::new(
             HashProbeExec::try_new(
@@ -370,7 +375,6 @@ async fn create_hash_build_probe_fragments(
                 node.projection.clone(),
                 node.mode,
                 node.null_equals_null,
-                Some(node.properties().clone()),
                 Some(stats),
             )
             .unwrap(),
@@ -419,6 +423,7 @@ mod tests {
     };
 
     use datafusion_expr::{col, lit, LogicalPlan};
+    use ma::assert_gt;
     use more_asserts as ma;
 
     async fn create_physical_plan(logical_plan: LogicalPlan) -> Result<Arc<dyn ExecutionPlan>> {
@@ -682,7 +687,11 @@ mod tests {
 
         let mut found_hash_build = false;
 
-        for (_, fragment) in fragments {
+        let mut hash_build_fragment_id = None;
+
+        assert_eq!(fragments.len(), 2);
+
+        for (_, fragment) in &fragments {
             assert!(fragment.root.is_some());
             print!("{:#?}", fragment.root);
             if let Some(_) = fragment
@@ -694,7 +703,20 @@ mod tests {
             {
                 found_hash_build = true;
                 assert!(fragment.hash_probe_locations.is_empty());
-            } else {
+                assert_gt!(fragment.fragment_id, 0);
+                hash_build_fragment_id = Some(fragment.fragment_id);
+            }
+        }
+        assert!(found_hash_build);
+
+        for (_, fragment) in &fragments {
+            if let None = fragment
+                .root
+                .clone()
+                .unwrap()
+                .as_any()
+                .downcast_ref::<HashBuildExec>()
+            {
                 // Check that the info about the location of the HashProbeExec node was populated correctly.
                 assert_eq!(fragment.hash_probe_locations.len(), 1);
                 let location = fragment.hash_probe_locations.first().unwrap();
@@ -703,8 +725,8 @@ mod tests {
                 assert_eq!(path[0], 0);
                 assert_eq!(path[1], 0);
                 assert_eq!(path[2], 0);
+                assert_eq!(location.1, hash_build_fragment_id.unwrap());
             }
         }
-        assert!(found_hash_build);
     }
 }

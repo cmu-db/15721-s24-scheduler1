@@ -77,6 +77,7 @@ impl Executor {
 
         // If this plan requires us to build a hash table.
         if let Some(node) = process_plan.as_any().downcast_ref::<HashBuildExec>() {
+            debug_println!("Need to build a hash table for fragment {fragment_id}");
             let input = node.input().clone();
             let on = node.on.clone();
             let join_data = self
@@ -87,6 +88,7 @@ impl Executor {
                 .write()
                 .await
                 .insert(fragment_id, join_data);
+            return QueryResult::HashTable;
         }
 
         if get_query_response.aborted {
@@ -99,6 +101,9 @@ impl Executor {
         for hash_build_info in query_details.hash_build_data {
             let path_from_parent = hash_build_info.path_from_parent;
             let build_fragment_id = hash_build_info.build_fragment_id;
+            debug_println!(
+                "Need to add precomputed hash table computed in fragment {build_fragment_id}"
+            );
             let join_data = self
                 .generated_hash_tables
                 .read()
@@ -160,8 +165,7 @@ impl Executor {
                 acc.0.push(batch);
                 Ok(acc)
             })
-            .await
-            .unwrap();
+            .await?;
 
         let mut hashmap = JoinHashMap::with_capacity(num_rows);
         let mut hashes_buffer = Vec::new();
@@ -215,7 +219,6 @@ impl Executor {
                     hash_probe.projection.clone(),
                     *hash_probe.partition_mode(),
                     hash_probe.null_equals_null(),
-                    None,
                     None,
                 )
                 .unwrap();

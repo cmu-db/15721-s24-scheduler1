@@ -3,7 +3,6 @@ use crate::queue::{abort_query, add_fragments_to_scheduler, finish_fragment};
 use crate::scheduler_interface::*;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::FileScanConfig;
-use datafusion::physical_plan::joins::HashBuildResult;
 use datafusion::physical_plan::ExecutionPlan;
 
 extern crate lazy_static;
@@ -67,7 +66,7 @@ pub struct ScheduleResult {
 /// The result of query execution.
 pub enum QueryResult {
     ArrowExec(FileScanConfig),
-    HashBuildExec(HashBuildResult),
+    HashBuild,
     ParquetExec(FileScanConfig),
 }
 
@@ -101,9 +100,8 @@ impl Scheduler {
         &self,
         child_fragment_id: QueryFragmentId,
         fragment_result: QueryResult,
-        intermediate_files: Vec<Vec<PartitionedFile>>,
     ) -> Vec<String> {
-        finish_fragment(child_fragment_id, fragment_result, intermediate_files).await
+        finish_fragment(child_fragment_id, fragment_result).await
     }
 
     pub fn query_job_status(&self, _query_id: i32) -> QueryStatus {
@@ -119,19 +117,26 @@ impl Scheduler {
         &self,
         query_id: u64,
         fragment_id: u64,
-        file_scan_config: FileScanConfig,
+        file_scan_config: Option<FileScanConfig>,
         file_scan_config_bytes: Vec<u8>,
         is_root_fragment: bool,
     ) -> Vec<String> {
-        let to_delete = self
-            .finish_fragment(
-                fragment_id.try_into().unwrap(),
-                QueryResult::ParquetExec(file_scan_config.clone()),
-                file_scan_config.file_groups,
-            )
-            .await;
+        let mut to_delete = Vec::new();
+        if let Some(file_scan_config) = &file_scan_config {
+            to_delete = self
+                .finish_fragment(
+                    fragment_id.try_into().unwrap(),
+                    QueryResult::ParquetExec(file_scan_config.clone()),
+                )
+                .await;
+        } else {
+            to_delete = self
+                .finish_fragment(fragment_id.try_into().unwrap(), QueryResult::HashBuild)
+                .await;
+        }
 
         if is_root_fragment {
+            assert!(file_scan_config.is_some());
             if let Some(tx) = self.query_result_senders.write().await.remove(&query_id) {
                 tx.send(file_scan_config_bytes).await.unwrap();
             }

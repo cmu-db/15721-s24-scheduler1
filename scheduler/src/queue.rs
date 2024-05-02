@@ -2,8 +2,8 @@ use crate::{
     parser::{QueryFragment, QueryFragmentId},
     scheduler::{QueryResult, SCHEDULER_INSTANCE},
 };
-use datafusion::datasource::listing::PartitionedFile;
 use datafusion::{config::TableParquetOptions, physical_plan::joins::HashJoinExec};
+use datafusion::{datasource::listing::PartitionedFile, physical_plan::empty::EmptyExec};
 use datafusion::{
     datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
     physical_plan::joins::HashBuildExec,
@@ -95,7 +95,10 @@ pub fn update_plan_parent(
         match query_result {
             QueryResult::ArrowExec(file_config) => return create_arrow_scan_node(file_config),
             QueryResult::ParquetExec(file_config) => return create_parquet_scan_node(file_config),
-            QueryResult::HashBuildExec(result) => return HashBuildExec::get(result),
+            QueryResult::HashBuild => {
+                // return Arc::new(EmptyExec::new(root.schema()).with_partitions(3))
+                return root.children()[0].clone();
+            }
         }
     }
 
@@ -136,7 +139,6 @@ pub fn update_plan_parent(
 pub async fn finish_fragment(
     fragment_id: QueryFragmentId,
     fragment_result: QueryResult,
-    intermediate_files: Vec<Vec<PartitionedFile>>,
 ) -> Vec<String> {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
@@ -153,32 +155,38 @@ pub async fn finish_fragment(
         .parent_path_from_root
         .clone();
 
-    // these intermediate files belongs to the child_fragment which has been processed and should be deleted
-    let child_fragment_intermediate_files = all_fragments
-        .get(&fragment_id)
-        .unwrap()
-        .intermediate_files
-        .clone()
-        .into_iter();
-
     let mut to_delete: Vec<String> = vec![];
 
-    for file in child_fragment_intermediate_files {
-        match intermediate_file_pin.get_mut(&file) {
-            None => {
-                debug_println!("This is a intermediate file that wasn't recorded or undercounted")
-            }
-            Some(1) => {
-                intermediate_file_pin.remove(&file);
-                to_delete.push(file);
-            }
-            Some(pin_count) => {
-                debug_assert!(*pin_count > 1);
-                *pin_count -= 1;
+    if let QueryResult::ParquetExec(_) = &fragment_result {
+        // these intermediate files belongs to the child_fragment which has been processed and should be deleted
+        let child_fragment_intermediate_files = all_fragments
+            .get(&fragment_id)
+            .unwrap()
+            .intermediate_files
+            .clone()
+            .into_iter();
+
+        // Delete any intermediate output files that were needed for this fragment.
+        for file in child_fragment_intermediate_files {
+            match intermediate_file_pin.get_mut(&file) {
+                None => {
+                    debug_println!(
+                        "This is a intermediate file that wasn't recorded or undercounted"
+                    )
+                }
+                Some(1) => {
+                    intermediate_file_pin.remove(&file);
+                    to_delete.push(file);
+                }
+                Some(pin_count) => {
+                    debug_assert!(*pin_count > 1);
+                    *pin_count -= 1;
+                }
             }
         }
     }
 
+    // Figure out which fragments are now eligible to be scheduled.
     let mut new_ids_to_push = vec![];
     for (i, id) in parent_fragment_ids.iter().enumerate() {
         let parent_fragment = all_fragments.get_mut(id).unwrap();
@@ -192,14 +200,17 @@ pub async fn finish_fragment(
 
         parent_fragment.root = Some(new_root);
 
-        for partition in intermediate_files.clone().into_iter() {
-            for file in partition.clone().into_iter() {
-                *intermediate_file_pin
-                    .entry(file.path().to_string())
-                    .or_insert(0) += 1;
-                parent_fragment
-                    .intermediate_files
-                    .insert(file.path().to_string());
+        if let QueryResult::ParquetExec(result) = &fragment_result {
+            let intermediate_files = &result.file_groups;
+            for partition in intermediate_files.clone().into_iter() {
+                for file in partition.clone().into_iter() {
+                    *intermediate_file_pin
+                        .entry(file.path().to_string())
+                        .or_insert(0) += 1;
+                    parent_fragment
+                        .intermediate_files
+                        .insert(file.path().to_string());
+                }
             }
         }
 
@@ -470,7 +481,6 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
-            vec![vec![]],
         )
         .await;
 
@@ -489,7 +499,6 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
-            vec![vec![]],
         )
         .await;
 
