@@ -1,5 +1,5 @@
-use chronos::integration::scan_from_parquet;
 use chronos::scheduler_interface::scheduler_client::SchedulerClient;
+use chronos::utils::scan_from_parquet;
 use datafusion_proto::protobuf::FileScanExecConf;
 
 use bytes::IntoBuf;
@@ -57,7 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let mut sql = String::new();
         let mut prio = String::new();
-        println!("\nEnter a query below: \n");
+        print!("\n> ");
+        io::stdout().flush().unwrap();
         std::io::stdin()
             .read_line(&mut sql)
             .expect("failed to read line");

@@ -1,6 +1,4 @@
 use async_recursion::async_recursion;
-use chronos::executor_interface::executor_service_server::ExecutorService;
-use chronos::executor_interface::{ExecuteQueryArgs, ExecuteQueryRet};
 use chronos::scheduler_interface::scheduler_client::SchedulerClient;
 use datafusion::datasource::physical_plan::FileScanConfig;
 use datafusion::execution::memory_pool::MemoryConsumer;
@@ -8,8 +6,8 @@ use datafusion::execution::TaskContext;
 use datafusion::physical_expr::PhysicalExprRef;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion::physical_plan::joins::utils::JoinHashMap;
-use datafusion::physical_plan::joins::JoinLeftData;
 use datafusion::physical_plan::joins::{update_hash, HashBuildExec};
+use datafusion::physical_plan::joins::{HashProbeExec, JoinLeftData};
 use datafusion_common::arrow::compute::concat_batches;
 
 use datafusion_common::DataFusionError;
@@ -21,15 +19,18 @@ use chronos::scheduler_interface::{
 };
 use futures::TryStreamExt;
 use tokio::sync::RwLock;
-use tonic::{Code, Request, Response, Status};
+use tonic::transport::Channel;
+use tonic::Code;
 
 use ahash::RandomState;
-use chronos::integration::{local_file_config, spill_records_to_disk};
+use chronos::utils::{local_file_config, spill_records_to_disk};
 use core::time;
 use datafusion::physical_plan::ExecutionPlanProperties;
+use datafusion::physical_plan::{self, ExecutionPlan};
 use datafusion::prelude::*;
+
 // use lib::integration::{local_file_config, local_filegroup_config, spill_records_to_disk};
-use chronos::integration::local_filegroup_config;
+use chronos::utils::local_filegroup_config;
 use prost::Message;
 use std::collections::HashMap;
 use std::env;
@@ -47,21 +48,7 @@ enum QueryResult {
 #[derive(Debug, Default)]
 pub struct Executor {
     random_state: RandomState,
-    generated_hash_tables: Arc<RwLock<HashMap<i32, JoinLeftData>>>,
-}
-use datafusion::physical_plan::{self, ExecutionPlan};
-
-#[tonic::async_trait]
-impl ExecutorService for Executor {
-    async fn execute_query(
-        &self,
-        request: Request<ExecuteQueryArgs>,
-    ) -> Result<Response<ExecuteQueryRet>, Status> {
-        let _request_content = request.into_inner();
-
-        let reply = ExecuteQueryRet {};
-        Ok(Response::new(reply))
-    }
+    generated_hash_tables: Arc<RwLock<HashMap<u64, JoinLeftData>>>,
 }
 
 impl Executor {
@@ -73,13 +60,14 @@ impl Executor {
         let wd = env::current_dir().unwrap();
         let wd_str = wd.to_str().unwrap();
 
-        let query_id = get_query_response.query_id;
-        let fragment_id = get_query_response.fragment_id;
+        let query_details = get_query_response.query_details.unwrap();
+
+        let query_id = query_details.query_id;
+        let fragment_id = query_details.fragment_id;
         let intermediate_output = format!(
             "/{wd_str}/scheduler/src/example_data/query_{query_id}/fragment_{fragment_id}.parquet"
         );
-        let process_plan =
-            physical_plan_from_bytes(&get_query_response.physical_plan, ctx).unwrap();
+        let mut process_plan = physical_plan_from_bytes(&query_details.physical_plan, ctx).unwrap();
         let output_schema = process_plan.schema();
 
         if get_query_response.aborted {
@@ -87,31 +75,13 @@ impl Executor {
         }
         let context = ctx.state().task_ctx();
 
-        // If this plan requires us to build a hash table.
-        if let Some(node) = process_plan.as_any().downcast_ref::<HashBuildExec>() {
-            let input = node.input().clone();
-            let on = node.on.clone();
-            let join_data = self
-                .build_hash_table(None, input, context.clone(), on)
-                .await
-                .expect("Failed to build a hash table");
-            self.generated_hash_tables
-                .write()
-                .await
-                .insert(fragment_id, join_data);
-        }
-
-        if get_query_response.aborted {
-            return QueryResult::Config(local_file_config(output_schema, ""));
-        }
-
-        let context = ctx.state().task_ctx();
-
         // If we need to add a precomputed hash table to a hash probe exec node
-        for hash_build_info in get_query_response.hash_build_data_info {
+        for hash_build_info in query_details.hash_build_data {
             let path_from_parent = hash_build_info.path_from_parent;
-            let path_from_parent_vec: Vec<u32> = serde_json::from_slice(&path_from_parent).unwrap();
             let build_fragment_id = hash_build_info.build_fragment_id;
+            debug_println!(
+                "Need to add precomputed hash table computed in fragment {build_fragment_id}"
+            );
             let join_data = self
                 .generated_hash_tables
                 .read()
@@ -119,14 +89,47 @@ impl Executor {
                 .get(&build_fragment_id)
                 .expect("Unable to find the built hash table")
                 .clone();
-            let _modified_plan = self
-                .add_hash_table_to_hash_probe(
-                    join_data,
-                    process_plan.clone(),
-                    &path_from_parent_vec,
-                )
+            process_plan = self
+                .add_hash_table_to_hash_probe(join_data, process_plan.clone(), &path_from_parent)
                 .await;
+            debug_println!(
+                "Successfully added precomputed hash table computed in fragment {build_fragment_id}"
+            );
         }
+
+        // If this plan requires us to build a hash table.
+        if let Some(node) = process_plan.as_any().downcast_ref::<HashBuildExec>() {
+            debug_println!("Need to build a hash table for fragment {fragment_id}");
+            let input = node.input().clone();
+            if input.as_any().downcast_ref::<HashProbeExec>().is_some() {
+                debug_println!(
+                    "Input for the hash table is a HashProbeExec for fragment {fragment_id}"
+                );
+            }
+            let on = node.on.clone();
+            let join_data = self
+                .build_hash_table(None, input, context.clone(), on)
+                .await
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to build a hash table: {:#?} {:#?}",
+                        node.schema(),
+                        node.on()
+                    )
+                });
+            self.generated_hash_tables
+                .write()
+                .await
+                .insert(fragment_id, join_data);
+            debug_println!("Generated hash table for fragment {fragment_id}");
+            return QueryResult::HashTable;
+        }
+
+        if get_query_response.aborted {
+            return QueryResult::Config(local_file_config(output_schema, ""));
+        }
+
+        let context = ctx.state().task_ctx();
 
         let output_stream = physical_plan::execute_stream(process_plan, context).unwrap();
 
@@ -177,8 +180,7 @@ impl Executor {
                 acc.0.push(batch);
                 Ok(acc)
             })
-            .await
-            .unwrap();
+            .await?;
 
         let mut hashmap = JoinHashMap::with_capacity(num_rows);
         let mut hashes_buffer = Vec::new();
@@ -220,8 +222,30 @@ impl Executor {
         plan: Arc<dyn ExecutionPlan>,
         path_from_parent: &[u32],
     ) -> Arc<dyn ExecutionPlan> {
+        // Found the HashProbeExec node (hopefully). Let's populate it with the join data we have pre-computed.
         if path_from_parent.is_empty() {
-            return plan;
+            if let Some(hash_probe) = plan.as_any().downcast_ref::<HashProbeExec>() {
+                let mut new_node = HashProbeExec::try_new(
+                    hash_probe.left.clone(),
+                    hash_probe.right.clone(),
+                    hash_probe.on.clone(),
+                    hash_probe.filter.clone(),
+                    &hash_probe.join_type,
+                    hash_probe.projection.clone(),
+                    *hash_probe.partition_mode(),
+                    hash_probe.null_equals_null(),
+                    None,
+                )
+                .unwrap();
+                new_node.set_join_data(join_data);
+                let arc_node: Arc<dyn ExecutionPlan> = Arc::new(new_node);
+                return arc_node;
+            } else {
+                panic!(
+                    "Expected to reach a hash probe, instead reached: {:#?}",
+                    plan
+                );
+            }
         }
 
         let mut new_children = Vec::new();
@@ -233,44 +257,56 @@ impl Executor {
                 continue;
             }
             new_children.push(
-                self.add_hash_table_to_hash_probe(
-                    join_data.clone(),
-                    plan.clone(),
-                    &path_from_parent[1..],
-                )
-                .await,
+                self.add_hash_table_to_hash_probe(join_data.clone(), child, &path_from_parent[1..])
+                    .await,
             );
         }
         plan.with_new_children(new_children).unwrap()
     }
 
-    async fn initialize(&self, port: i32, delete_intermediate: bool) {
+    /// Initialize the executor with `worker_id` by connecting to the scheduler. `delete_intermediate` indicates
+    /// whether intermediate files should be deleted.
+    async fn initialize(&self, worker_id: i32, delete_intermediate: bool) {
         let scheduler_service_port = env::var("SCHEDULER_PORT").unwrap_or_else(|_error| {
             panic!("Scheduler port environment variable not set");
         });
         let uri = format!("http://[::1]:{scheduler_service_port}");
-        let mut client = SchedulerClient::connect(uri.clone())
+        let client = SchedulerClient::connect(uri.clone())
             .await
             .unwrap_or_else(|error| {
                 panic!("Unable to connect to the scheduler instance: {:?}", error);
             });
 
         debug_println!(
-            "executor at port {port} connected to the scheduler at {}",
+            "executor {worker_id} connected to the scheduler at {}",
             &uri
         );
-        let ctx = SessionContext::new();
 
+        self.executor_loop(client, delete_intermediate, worker_id)
+            .await;
+    }
+
+    /// Run the executor loop for the executor to poll the `client` for new query fragments to execute.
+    ///
+    /// `delete_intermediate` indicates whether intermediate files should be deleted.
+    async fn executor_loop(
+        &self,
+        mut client: SchedulerClient<Channel>,
+        delete_intermediate: bool,
+        worker_id: i32,
+    ) {
+        let ctx = SessionContext::new();
         loop {
             let get_request = tonic::Request::new(GetQueryArgs {});
             match client.get_query(get_request).await {
                 Ok(response) => {
                     let response = response.into_inner();
-                    if response.query_id < 0 {
+                    if response.query_details.is_none() {
                         sleep(time::Duration::from_millis(500));
                         continue;
                     }
 
+                    let query_details = response.query_details.clone().unwrap();
                     let result = self.process_fragment(response.clone(), &ctx).await;
 
                     let finished_request: tonic::Request<QueryExecutionDoneArgs>;
@@ -279,21 +315,21 @@ impl Executor {
                         QueryResult::Config(config) => {
                             let interm_proto = FileScanExecConf::try_from(&config).unwrap();
                             finished_request = tonic::Request::new(QueryExecutionDoneArgs {
-                                fragment_id: response.fragment_id,
+                                fragment_id: query_details.fragment_id,
                                 status: QueryStatus::Done.into(),
                                 file_scan_config: interm_proto.encode_to_vec(),
                                 root: response.root,
-                                query_id: response.query_id,
+                                query_id: query_details.query_id,
                                 generated_hash_table: false,
                             });
                         }
                         QueryResult::HashTable => {
                             finished_request = tonic::Request::new(QueryExecutionDoneArgs {
-                                fragment_id: response.fragment_id,
+                                fragment_id: query_details.fragment_id,
                                 status: QueryStatus::Done.into(),
                                 file_scan_config: vec![],
                                 root: response.root,
-                                query_id: response.query_id,
+                                query_id: query_details.query_id,
                                 generated_hash_table: true,
                             });
                         }
@@ -330,7 +366,7 @@ impl Executor {
                 Err(e) => match e.code() {
                     Code::Unavailable => {
                         debug_println!("get_query rpc unsuccessful: {:?}", e);
-                        debug_println!("executor on port {port} is exiting");
+                        debug_println!("executor {worker_id} is exiting");
                         break;
                     }
                     _ => {
@@ -358,22 +394,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut handles = Vec::new();
-    let base_port = 5555;
 
     let generated_hash_tables = Arc::new(RwLock::new(HashMap::new()));
 
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(10 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap();
     for i in 0..num_workers {
         let generated_hash_tables = generated_hash_tables.clone();
-        handles.push(tokio::spawn(async move {
+        handles.push(rt.spawn(async move {
             let executor = Executor {
                 random_state: RandomState::with_seeds(0, 0, 0, 0),
                 generated_hash_tables,
             };
-            executor
-                .initialize(base_port + i, delete_intermediate)
-                .await;
+            executor.initialize(i, delete_intermediate).await;
         }));
     }
+    // for i in 0..num_workers {
+    //     let generated_hash_tables = generated_hash_tables.clone();
+    //     handles.push(tokio::spawn(async move {
+    //         let executor = Executor {
+    //             random_state: RandomState::with_seeds(0, 0, 0, 0),
+    //             generated_hash_tables,
+    //         };
+    //         executor.initialize(i, delete_intermediate).await;
+    //     }));
+    // }
 
     for handle in handles {
         let _ = handle.await;
@@ -391,7 +439,7 @@ mod tests {
         std::process::Command::new("cargo run")
             .env("SCHEDULER_PORT", "50051")
             .arg("--bin")
-            .arg("scheduler-api-server")
+            .arg("scheduler-service")
             .output()?;
 
         std::thread::sleep(std::time::Duration::from_millis(2000));

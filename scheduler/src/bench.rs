@@ -1,5 +1,5 @@
-use chronos::integration::scan_from_parquet;
 use chronos::scheduler_interface::scheduler_client::SchedulerClient;
+use chronos::utils::scan_from_parquet;
 use datafusion_proto::protobuf::FileScanExecConf;
 
 use bytes::IntoBuf;

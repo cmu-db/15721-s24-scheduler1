@@ -30,22 +30,34 @@ impl Scheduler for MyScheduler {
         _request: Request<GetQueryArgs>,
     ) -> Result<Response<GetQueryRet>, Status> {
         let plan = chronos::scheduler::SCHEDULER_INSTANCE
-            .get_plan_from_queue()
+            .get_next_query_fragment()
             .await;
 
         match plan {
-            Some(p) => {
-                let physical_plan = physical_plan_to_bytes(p.root.unwrap());
+            Some(plan) => {
+                let plan_bytes = physical_plan_to_bytes(plan.root.unwrap());
 
-                match physical_plan {
-                    Ok(p_bytes) => {
+                match plan_bytes {
+                    Ok(plan_bytes) => {
+                        let mut hash_build_data = vec![];
+                        for location in plan.hash_probe_locations {
+                            let probe_node_path = location.0;
+                            let build_fragment_id = location.1;
+                            hash_build_data.push(HashBuildData {
+                                path_from_parent: probe_node_path,
+                                build_fragment_id,
+                            })
+                        }
+
                         let reply = GetQueryRet {
-                            query_id: i32::try_from(p.query_id).unwrap(),
-                            fragment_id: i32::try_from(p.fragment_id).unwrap(),
-                            physical_plan: p_bytes.to_vec(),
-                            root: p.parent_fragments.is_empty(),
-                            hash_build_data_info: vec![],
-                            aborted: p.aborted,
+                            query_details: Some(QueryDetails {
+                                query_id: plan.query_id,
+                                fragment_id: plan.fragment_id,
+                                physical_plan: plan_bytes.to_vec(),
+                                hash_build_data,
+                            }),
+                            root: plan.parent_fragments.is_empty(),
+                            aborted: plan.aborted,
                         };
                         Ok(Response::new(reply))
                     }
@@ -53,11 +65,8 @@ impl Scheduler for MyScheduler {
                         println!("{:?}", e);
                         // chronos::queue::kill_query(p.query_id); TODO
                         let reply = GetQueryRet {
-                            query_id: -1,
-                            fragment_id: -1,
-                            physical_plan: vec![],
+                            query_details: None,
                             root: true, // setting this to true frees the CLI on the tokio channel, will do for now
-                            hash_build_data_info: vec![],
                             aborted: false,
                         };
                         Ok(Response::new(reply))
@@ -66,11 +75,8 @@ impl Scheduler for MyScheduler {
             }
             None => {
                 let reply = GetQueryRet {
-                    query_id: -1,
-                    fragment_id: -1,
-                    physical_plan: vec![],
+                    query_details: None,
                     root: false,
-                    hash_build_data_info: vec![],
                     aborted: false,
                 };
                 Ok(Response::new(reply))
@@ -97,14 +103,14 @@ impl Scheduler for MyScheduler {
         }
 
         let sched_info = chronos::scheduler::SCHEDULER_INSTANCE
-            .schedule_query(physical_plan, metadata.unwrap(), false)
+            .schedule_query(physical_plan, metadata.unwrap(), true)
             .await;
 
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(1);
 
         {
             SCHEDULER_INSTANCE
-                .job_status
+                .query_result_senders
                 .write()
                 .await
                 .insert(sched_info.query_id, tx);
@@ -155,38 +161,39 @@ impl Scheduler for MyScheduler {
         let request_content = request.into_inner();
         let fragment_id = request_content.fragment_id;
         let query_status = QueryStatus::try_from(request_content.status);
-        let file_scan_exec_conf =
-            FileScanExecConf::decode(request_content.file_scan_config.clone().into_buf()).unwrap();
-        let file_scan_conf = from_proto::parse_protobuf_file_scan_config(
-            &file_scan_exec_conf,
-            &SessionContext::new(),
-        )
-        .unwrap();
 
         if query_status.is_err() {
             let status = Status::new(Code::InvalidArgument, "Query status not specified");
             return Err(status);
         }
 
-        let to_delete = chronos::scheduler::SCHEDULER_INSTANCE
-            .finish_fragment(
-                fragment_id.try_into().unwrap(),
-                chronos::scheduler::QueryResult::ParquetExec(file_scan_conf.clone()),
-                file_scan_conf.file_groups,
+        let mut file_scan_config = None;
+
+        if request_content.generated_hash_table {
+        } else {
+            let file_scan_exec_conf =
+                FileScanExecConf::decode(request_content.file_scan_config.clone().into_buf())
+                    .unwrap();
+            file_scan_config = Some(
+                from_proto::parse_protobuf_file_scan_config(
+                    &file_scan_exec_conf,
+                    &SessionContext::new(),
+                )
+                .unwrap(),
+            );
+        }
+        let query_id = request_content.query_id;
+        let is_root_fragment = request_content.root;
+
+        let to_delete = SCHEDULER_INSTANCE
+            .query_execution_done(
+                query_id,
+                fragment_id,
+                file_scan_config,
+                request_content.file_scan_config,
+                is_root_fragment,
             )
             .await;
-
-        if request_content.root {
-            // let mut scheduler = SCHEDULER_INSTANCE.lock().await;
-            if let Some(tx) = SCHEDULER_INSTANCE
-                .job_status
-                .write()
-                .await
-                .remove(&request_content.query_id)
-            {
-                tx.send(request_content.file_scan_config).await.unwrap();
-            }
-        }
 
         let reply = QueryExecutionDoneRet {
             intermediate_files: to_delete,
@@ -217,7 +224,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use tokio::runtime;
 
     let rt = runtime::Builder::new_multi_thread()
-        .thread_stack_size(10 * 1024 * 1024)
+        .thread_stack_size(15 * 1024 * 1024)
         .enable_all()
         .build()
         .unwrap();

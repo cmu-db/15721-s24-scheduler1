@@ -1,9 +1,8 @@
+use crate::orchestrator::{abort_query, add_fragments_to_scheduler, finish_fragment};
 use crate::parser::{parse_into_fragments_wrapper, QueryFragment, QueryFragmentId};
-use crate::queue::{abort_query, add_fragments_to_scheduler, finish_fragment};
 use crate::scheduler_interface::*;
-use datafusion::datasource::listing::PartitionedFile;
+
 use datafusion::datasource::physical_plan::FileScanConfig;
-use datafusion::physical_plan::joins::HashBuildResult;
 use datafusion::physical_plan::ExecutionPlan;
 
 extern crate lazy_static;
@@ -15,58 +14,51 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
-static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
-use crate::debug_println;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
-/// The scheduler instance.
+/// Generator for query ids.
+static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
+
+/// A database query scheduler.
 ///
-/// Stores the metadata needed for query scheduling.
+/// Stores the metadata needed for query scheduling like the fragments that have been submitted to the scheduler for
+/// execution.
 #[derive(Debug)]
 pub struct Scheduler {
-    /// Map from query fragment id to fragment.
+    /// Map from query fragment id to fragment. This includes fragments that are not yet ellgible for execution
+    /// because they have child fragments pending execution.
     pub all_fragments: RwLock<HashMap<QueryFragmentId, QueryFragment>>,
 
     /// Query fragments pending execution.
     pub pending_fragments: RwLock<Vec<QueryFragmentId>>,
 
-    pub job_status: RwLock<HashMap<i32, Sender<Vec<u8>>>>,
+    /// Map from query id to a [`Sender`] for sending the [`FileScanConfig`] for the query result.
+    pub query_result_senders: RwLock<HashMap<u64, Sender<Vec<u8>>>>,
 
+    /// Map from intermediate output filename to its refcount. The query fragments executed output their results
+    /// into a file for now.
     pub intermediate_files: RwLock<HashMap<String, i32>>,
 }
 
-pub enum PipelineBreakers {
-    Aggregate,
-    Sort,
-    Join,
-    Set,
-    Cross,
-    Reference,
-    Write,
-    Ddl,
-    HashJoin,
-    MergeJoin,
-    NestedLoopJoin,
-    Window,
-    Exchange,
-    Expand,
-}
-
+/// Information received at the time the query is scheduled for execution.
 pub struct ScheduleResult {
-    pub query_id: i32,
+    /// The query id.
+    pub query_id: u64,
+    /// The time the query was enqueued.
     pub enqueue_time: SystemTime,
 }
 
+/// The result of query execution.
 pub enum QueryResult {
     ArrowExec(FileScanConfig),
-    HashBuildExec(HashBuildResult),
+    HashBuild,
     ParquetExec(FileScanConfig),
 }
 
-pub struct IntermediateNode {}
-
 impl Scheduler {
+    /// Schedule `physical_plan` for execution with `query_info`. `pipelined` indicates whether hash join execution
+    /// plan nodes should be split into a build and probe phase.
     pub async fn schedule_query(
         &self,
         physical_plan: Arc<dyn ExecutionPlan>,
@@ -92,42 +84,71 @@ impl Scheduler {
     /// `fragment_id` with result `fragment_result`.
     pub async fn finish_fragment(
         &self,
-        child_fragment_id: QueryFragmentId,
+        fragment_id: QueryFragmentId,
         fragment_result: QueryResult,
-        intermediate_files: Vec<Vec<PartitionedFile>>,
     ) -> Vec<String> {
-        finish_fragment(child_fragment_id, fragment_result, intermediate_files).await
+        finish_fragment(fragment_id, fragment_result).await
     }
 
-    pub fn query_job_status(&self, _query_id: i32) -> QueryStatus {
+    /// Query the status of the query with `query_id`.
+    pub fn query_job_status(&self, query_id: i32) -> QueryStatus {
+        let _ = query_id;
         unimplemented!()
     }
 
-    pub fn query_execution_done(&self, _fragment_id: i32, _query_status: QueryStatus) {
-        unimplemented!()
+    /// Marks the completion of the execution of `fragment_id` belonging to `query_id`.
+    ///
+    /// `is_root_fragment` indicates that the fragment is the root fragment of the query, implying the completion of
+    /// the entire query. `file_scan_config` and `file_scan_config_bytes` contain information to retrieve the output
+    /// of the query.
+    pub async fn query_execution_done(
+        &self,
+        query_id: u64,
+        fragment_id: u64,
+        file_scan_config: Option<FileScanConfig>,
+        file_scan_config_bytes: Vec<u8>,
+        is_root_fragment: bool,
+    ) -> Vec<String> {
+        let mut to_delete = Vec::new();
+        if let Some(file_scan_config) = &file_scan_config {
+            to_delete = self
+                .finish_fragment(
+                    fragment_id.try_into().unwrap(),
+                    QueryResult::ParquetExec(file_scan_config.clone()),
+                )
+                .await;
+        } else {
+            to_delete = self
+                .finish_fragment(fragment_id.try_into().unwrap(), QueryResult::HashBuild)
+                .await;
+        }
+
+        if is_root_fragment {
+            assert!(file_scan_config.is_some());
+            if let Some(tx) = self.query_result_senders.write().await.remove(&query_id) {
+                tx.send(file_scan_config_bytes).await.unwrap();
+            }
+        }
+        to_delete
     }
 
-    pub fn parse_physical_plan(&self, _physical_plan: &dyn ExecutionPlan) {}
-
+    /// Abort the query with `query_id`.
     pub async fn abort_query(&self, query_id: i32) {
         abort_query(query_id.try_into().unwrap()).await;
     }
 
-    // pub async fn register_executor(&self, port: i32) {
-    //     self.executors.write().await.push(ExecutorHandle { port });
-    //     debug_println!("Executor registered; port={port}");
-    // }
-
-    pub async fn get_plan_from_queue(&self) -> Option<QueryFragment> {
-        crate::queue::get_plan_from_queue().await
+    /// Get a query fragment from the scheduler for execution.
+    pub async fn get_next_query_fragment(&self) -> Option<QueryFragment> {
+        crate::orchestrator::get_plan_from_queue().await
     }
 }
 
 lazy_static! {
+    /// Scheduler singleton.
     pub static ref SCHEDULER_INSTANCE: Scheduler = Scheduler {
         all_fragments: RwLock::new(HashMap::new()),
         pending_fragments: RwLock::new(vec![]),
-        job_status: RwLock::new(HashMap::<i32, Sender<Vec<u8>>>::new()),
+        query_result_senders: RwLock::new(HashMap::<u64, Sender<Vec<u8>>>::new()),
         intermediate_files: RwLock::new(HashMap::<String, i32>::new()),
     };
 }

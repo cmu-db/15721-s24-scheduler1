@@ -2,12 +2,9 @@ use crate::{
     parser::{QueryFragment, QueryFragmentId},
     scheduler::{QueryResult, SCHEDULER_INSTANCE},
 };
-use datafusion::datasource::listing::PartitionedFile;
-use datafusion::{config::TableParquetOptions, physical_plan::joins::HashJoinExec};
-use datafusion::{
-    datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec},
-    physical_plan::joins::HashBuildExec,
-};
+use datafusion::config::TableParquetOptions;
+
+use datafusion::datasource::physical_plan::{ArrowExec, FileScanConfig, ParquetExec};
 
 use super::debug_println;
 
@@ -95,7 +92,11 @@ pub fn update_plan_parent(
         match query_result {
             QueryResult::ArrowExec(file_config) => return create_arrow_scan_node(file_config),
             QueryResult::ParquetExec(file_config) => return create_parquet_scan_node(file_config),
-            QueryResult::HashBuildExec(result) => return HashBuildExec::get(result),
+            QueryResult::HashBuild => {
+                // assert!(root.as_any().downcast_ref::<HashBuildExec>().is_some());
+                // return root.children()[0].clone();
+                return root;
+            }
         }
     }
 
@@ -107,24 +108,6 @@ pub fn update_plan_parent(
         if i != path[0] {
             new_children.push(child);
         } else {
-            if path.len() == 2 {
-                if let Some(node) = child.as_any().downcast_ref::<HashJoinExec>() {
-                    let _probe_side = node.right().clone();
-                    // return Arc::new(
-                    //     HashProbeExec::try_new(
-                    //         probe_side,
-                    //         node.on,
-                    //         node.filter,
-                    //         &node.join_type,
-                    //         node.projection,
-                    //         node.mode,
-                    //         node.null_equals_null,
-                    //         //node.join_data,
-                    //     )
-                    //     .unwrap(),
-                    // );
-                }
-            }
             new_children.push(update_plan_parent(child, &path[1..], query_result));
         }
         i += 1;
@@ -132,12 +115,10 @@ pub fn update_plan_parent(
     root.with_new_children(new_children).unwrap()
 }
 
-/// Marks the completion of the execution of the query fragment with
-/// `fragment_id` with result `fragment_result`.
+/// Marks the completion of the execution of the query fragment with `fragment_id` with result `fragment_result`.
 pub async fn finish_fragment(
     fragment_id: QueryFragmentId,
     fragment_result: QueryResult,
-    intermediate_files: Vec<Vec<PartitionedFile>>,
 ) -> Vec<String> {
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
@@ -154,53 +135,66 @@ pub async fn finish_fragment(
         .parent_path_from_root
         .clone();
 
-    // these intermediate files belongs to the child_fragment which has been processed and should be deleted
-    let child_fragment_intermediate_files = all_fragments
-        .get(&fragment_id)
-        .unwrap()
-        .intermediate_files
-        .clone()
-        .into_iter();
-
     let mut to_delete: Vec<String> = vec![];
 
-    for file in child_fragment_intermediate_files {
-        match intermediate_file_pin.get_mut(&file) {
-            None => {
-                debug_println!("This is a intermediate file that wasn't recorded or undercounted")
-            }
-            Some(1) => {
-                intermediate_file_pin.remove(&file);
-                to_delete.push(file);
-            }
-            Some(pin_count) => {
-                debug_assert!(*pin_count > 1);
-                *pin_count -= 1;
+    if let QueryResult::ParquetExec(_) = &fragment_result {
+        // these intermediate files belongs to the child_fragment which has been processed and should be deleted
+        let child_fragment_intermediate_files = all_fragments
+            .get(&fragment_id)
+            .unwrap()
+            .intermediate_files
+            .clone()
+            .into_iter();
+
+        // Delete any intermediate output files that were needed for this fragment.
+        for file in child_fragment_intermediate_files {
+            match intermediate_file_pin.get_mut(&file) {
+                None => {
+                    debug_println!(
+                        "This is a intermediate file that wasn't recorded or undercounted"
+                    )
+                }
+                Some(1) => {
+                    intermediate_file_pin.remove(&file);
+                    to_delete.push(file);
+                }
+                Some(pin_count) => {
+                    debug_assert!(*pin_count > 1);
+                    *pin_count -= 1;
+                }
             }
         }
     }
 
+    // Figure out which fragments are now eligible to be scheduled.
     let mut new_ids_to_push = vec![];
     for (i, id) in parent_fragment_ids.iter().enumerate() {
         let parent_fragment = all_fragments.get_mut(id).unwrap();
 
         let path = &parent_fragment_paths[i];
-        let new_root = update_plan_parent(
-            parent_fragment.root.clone().unwrap(),
-            path,
-            &fragment_result,
-        );
+        match fragment_result {
+            QueryResult::HashBuild => {}
+            _ => {
+                let new_root = update_plan_parent(
+                    parent_fragment.root.clone().unwrap(),
+                    path,
+                    &fragment_result,
+                );
 
-        parent_fragment.root = Some(new_root);
-
-        for partition in intermediate_files.clone().into_iter() {
-            for file in partition.clone().into_iter() {
-                *intermediate_file_pin
-                    .entry(file.path().to_string())
-                    .or_insert(0) += 1;
-                parent_fragment
-                    .intermediate_files
-                    .insert(file.path().to_string());
+                parent_fragment.root = Some(new_root);
+            }
+        }
+        if let QueryResult::ParquetExec(result) = &fragment_result {
+            let intermediate_files = &result.file_groups;
+            for partition in intermediate_files.clone().into_iter() {
+                for file in partition.clone().into_iter() {
+                    *intermediate_file_pin
+                        .entry(file.path().to_string())
+                        .or_insert(0) += 1;
+                    parent_fragment
+                        .intermediate_files
+                        .insert(file.path().to_string());
+                }
             }
         }
 
@@ -248,7 +242,7 @@ pub async fn abort_query(query_id: u64) {
 pub async fn clear_queue() {
     let mut all_fragments = SCHEDULER_INSTANCE.all_fragments.write().await;
     let mut pending_fragments = SCHEDULER_INSTANCE.pending_fragments.write().await;
-    let mut job_status = SCHEDULER_INSTANCE.job_status.write().await;
+    let mut job_status = SCHEDULER_INSTANCE.query_result_senders.write().await;
     let mut intermediate_files = SCHEDULER_INSTANCE.intermediate_files.write().await;
 
     all_fragments.clear();
@@ -258,8 +252,8 @@ pub async fn clear_queue() {
 }
 #[cfg(test)]
 mod tests {
+    use crate::orchestrator::*;
     use crate::parser::*;
-    use crate::queue::*;
     use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
     use datafusion::datasource::{empty::EmptyTable, DefaultTableSource};
     use datafusion::execution::context::SessionState;
@@ -364,6 +358,7 @@ mod tests {
             fragment_cost: None,
             intermediate_files: HashSet::<String>::new(),
             aborted: false,
+            hash_probe_locations: vec![],
         };
         let mut map: HashMap<QueryFragmentId, QueryFragment> = HashMap::new();
         map.insert(0, fragment);
@@ -470,7 +465,6 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
-            vec![vec![]],
         )
         .await;
 
@@ -489,7 +483,6 @@ mod tests {
                 table_partition_cols: vec![],
                 output_ordering: vec![],
             }),
-            vec![vec![]],
         )
         .await;
 
