@@ -26,7 +26,8 @@ static QUERY_ID_GENERATOR: AtomicU64 = AtomicU64::new(0);
 /// execution.
 #[derive(Debug)]
 pub struct Scheduler {
-    /// Map from query fragment id to fragment.
+    /// Map from query fragment id to fragment. This includes fragments that are not yet ellgible for execution
+    /// because they have child fragments pending execution.
     pub all_fragments: RwLock<HashMap<QueryFragmentId, QueryFragment>>,
 
     /// Query fragments pending execution.
@@ -35,24 +36,9 @@ pub struct Scheduler {
     /// Map from query id to a [`Sender`] for sending the [`FileScanConfig`] for the query result.
     pub query_result_senders: RwLock<HashMap<u64, Sender<Vec<u8>>>>,
 
+    /// Map from intermediate output filename to its refcount. The query fragments executed output their results
+    /// into a file for now.
     pub intermediate_files: RwLock<HashMap<String, i32>>,
-}
-
-pub enum PipelineBreakers {
-    Aggregate,
-    Sort,
-    Join,
-    Set,
-    Cross,
-    Reference,
-    Write,
-    Ddl,
-    HashJoin,
-    MergeJoin,
-    NestedLoopJoin,
-    Window,
-    Exchange,
-    Expand,
 }
 
 /// Information received at the time the query is scheduled for execution.
@@ -98,13 +84,15 @@ impl Scheduler {
     /// `fragment_id` with result `fragment_result`.
     pub async fn finish_fragment(
         &self,
-        child_fragment_id: QueryFragmentId,
+        fragment_id: QueryFragmentId,
         fragment_result: QueryResult,
     ) -> Vec<String> {
-        finish_fragment(child_fragment_id, fragment_result).await
+        finish_fragment(fragment_id, fragment_result).await
     }
 
-    pub fn query_job_status(&self, _query_id: i32) -> QueryStatus {
+    /// Query the status of the query with `query_id`.
+    pub fn query_job_status(&self, query_id: i32) -> QueryStatus {
+        let _ = query_id;
         unimplemented!()
     }
 
@@ -144,8 +132,7 @@ impl Scheduler {
         to_delete
     }
 
-    pub fn parse_physical_plan(&self, _physical_plan: &dyn ExecutionPlan) {}
-
+    /// Abort the query with `query_id`.
     pub async fn abort_query(&self, query_id: i32) {
         abort_query(query_id.try_into().unwrap()).await;
     }
@@ -157,6 +144,7 @@ impl Scheduler {
 }
 
 lazy_static! {
+    /// Scheduler singleton.
     pub static ref SCHEDULER_INSTANCE: Scheduler = Scheduler {
         all_fragments: RwLock::new(HashMap::new()),
         pending_fragments: RwLock::new(vec![]),

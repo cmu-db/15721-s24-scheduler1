@@ -112,6 +112,7 @@ pub fn local_file_config(schema: datatypes::SchemaRef, filename: &str) -> FileSc
 }
 
 // think about parallel reads using partitioned file groups
+/// Create a [FileScanConfig] for a file group.
 pub fn local_filegroup_config(
     schema: datatypes::SchemaRef,
     filegroup: Vec<Vec<PartitionedFile>>,

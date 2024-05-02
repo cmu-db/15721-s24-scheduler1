@@ -1,7 +1,12 @@
 //! A scheduler for databases.
 //!
-//! Provides inter-query and intra-query parallelism by splitting up queries
+//! Provides inter-query and in and intra-query parallelism by splitting up queries
 //! into fragments.
+//!
+//! In general, a new query fragment is created when an
+//! [ExecutionPlan](datafusion::physical_plan::ExecutionPlan) has more than one child, with each child becoming
+//! its own fragment. Support is also available for pipelining hash join by splitting up the hash build phase into
+//! a separate fragment.
 
 mod parser;
 mod queue;

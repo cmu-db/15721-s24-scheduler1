@@ -10,9 +10,6 @@ message QueryInfo {
 
     // The estimated cost of query execution.
     int32 cost = 2;
-
-    // information about how to send the query results
-    // to the front end?
 }
 
 // The status of the query.
@@ -90,6 +87,7 @@ message QueryExecutionDoneArgs {
     // Query id of the whole plan
     uint64 query_id = 5;
 
+    // Whether a hash table was computed as part of this query.
     bool generated_hash_table = 6;
 }
 
@@ -106,34 +104,48 @@ message GetQueryArgs {
 
 }
 
+// Information about a pre-computed hash table that can be used for probing in a hash join.
 message HashBuildData {
+    // The path of the HashProbeExec node that needs this hash table for probing.
     repeated uint32 path_from_parent = 1;
+
+    // The id of the fragment that was used to create the hash table.
     uint64 build_fragment_id = 2;
 }
 
+// Information about the query returned for execution.
 message QueryDetails {
+    // The query id.
     uint64 query_id = 1;
 
+    // The fragment id.
     uint64 fragment_id = 2;
 
+    // The physical plan.
     bytes physical_plan = 3;
 
+    // Information about pre-computed hash tables needed for probing in hash joins.
     repeated HashBuildData hash_build_data = 5;
 }
 
 // Information returned from the GetQuery RPC.
 message GetQueryRet {
+    // Information about the query, if available.
     optional QueryDetails query_details = 1;
 
+    // Whether the query is the root query, meaning that it is not a child fragment.
     bool root = 2;
 
+    // Whether the query is aborted.
     bool aborted = 3;
 }
 
+// Arguments for the AbortQuery RPC.
 message AbortQueryArgs {
     int32 query_id = 1;
 }
 
+// Information returned from the AbortQuery RPC.
 message AbortQueryRet {
 }
 
@@ -152,7 +164,8 @@ service Scheduler {
     // of query fragment is complete.
     rpc QueryExecutionDone(QueryExecutionDoneArgs) returns
         (QueryExecutionDoneRet);
-    
+
+    // Abort a query. 
     rpc AbortQuery(AbortQueryArgs) returns
         (AbortQueryRet);
 
