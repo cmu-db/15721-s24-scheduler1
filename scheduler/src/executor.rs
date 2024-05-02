@@ -110,9 +110,13 @@ impl Executor {
             let join_data = self
                 .build_hash_table(None, input, context.clone(), on)
                 .await
-                .unwrap_or_else(|_| panic!("Failed to build a hash table: {:#?} {:#?}",
-                    node.schema(),
-                    node.on()));
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to build a hash table: {:#?} {:#?}",
+                        node.schema(),
+                        node.on()
+                    )
+                });
             self.generated_hash_tables
                 .write()
                 .await
