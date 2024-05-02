@@ -24,11 +24,11 @@ use tonic::Code;
 
 use ahash::RandomState;
 use chronos::integration::{local_file_config, spill_records_to_disk};
-use core::{hash, time};
+use core::time;
 use datafusion::physical_plan::ExecutionPlanProperties;
 use datafusion::physical_plan::{self, ExecutionPlan};
 use datafusion::prelude::*;
-use std::os::unix::process;
+
 // use lib::integration::{local_file_config, local_filegroup_config, spill_records_to_disk};
 use chronos::integration::local_filegroup_config;
 use prost::Message;
@@ -213,7 +213,7 @@ impl Executor {
                     hash_probe.filter.clone(),
                     &hash_probe.join_type,
                     hash_probe.projection.clone(),
-                    hash_probe.partition_mode().clone(),
+                    *hash_probe.partition_mode(),
                     hash_probe.null_equals_null(),
                     None,
                     None,

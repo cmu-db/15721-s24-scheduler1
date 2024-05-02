@@ -3,7 +3,7 @@ use crate::parser::QueryFragment;
 use crate::scheduler;
 use crate::scheduler::SCHEDULER_INSTANCE;
 use crate::scheduler_interface::QueryInfo;
-use datafusion::arrow::{array::RecordBatch, datatypes, util::pretty};
+use datafusion::arrow::datatypes;
 use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::physical_plan::{FileScanConfig, ParquetExec};
@@ -12,7 +12,7 @@ use datafusion::parquet::{arrow, basic::Compression, file::properties::WriterPro
 use datafusion::physical_plan::{self, ExecutionPlan, Statistics};
 use datafusion::prelude::*;
 use futures::stream::TryStreamExt;
-use std::{error, fs::File, path::Path, pin::Pin, sync::Arc};
+use std::{error, path::Path, pin::Pin, sync::Arc};
 
 /// Spills records obtained by polling `rb_stream` into `filename`.
 pub async fn spill_records_to_disk(
@@ -224,6 +224,7 @@ mod tests {
     use datafusion::physical_plan;
     use datafusion::physical_plan::ExecutionPlanProperties;
     use serial_test::serial;
+    use std::fs::File;
 
     #[tokio::test]
     #[serial]

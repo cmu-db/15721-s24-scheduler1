@@ -1,4 +1,3 @@
-use datafusion::arrow::datatypes::ToByteSlice;
 use prost::Message;
 
 use tokio::runtime::Handle;

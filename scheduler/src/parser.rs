@@ -697,7 +697,7 @@ mod tests {
             } else {
                 // Check that the info about the location of the HashProbeExec node was populated correctly.
                 assert_eq!(fragment.hash_probe_locations.len(), 1);
-                let location = fragment.hash_probe_locations.get(0).unwrap();
+                let location = fragment.hash_probe_locations.first().unwrap();
                 let path = &location.0;
                 assert_eq!(path.len(), 3);
                 assert_eq!(path[0], 0);
